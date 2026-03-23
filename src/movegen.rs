@@ -4,6 +4,18 @@ use crate::board::Board;
 use crate::types::{CastlingRights, Color, Move, MoveKind, Piece, Square};
 
 impl Board {
+    pub fn generate_pseudo_legal_moves(&self) -> Vec<Move> {
+        let mut moves = Vec::new();
+        moves.extend(self.generate_pawn_moves());
+        moves.extend(self.generate_knight_moves());
+        moves.extend(self.generate_bishop_moves());
+        moves.extend(self.generate_rook_moves());
+        moves.extend(self.generate_queen_moves());
+        moves.extend(self.generate_king_moves());
+        moves.extend(self.generate_castling_moves());
+        moves
+    }
+
     pub fn generate_knight_moves(&self) -> Vec<Move> {
         let us = self.side_to_move;
         let our_occupancy = self.occupancy(us);
@@ -544,6 +556,31 @@ mod tests {
         let moves = board.generate_castling_moves();
 
         assert!(moves.is_empty());
+    }
+
+    #[test]
+    fn starting_position_has_twenty_pseudo_legal_moves() {
+        let board = Board::starting_position();
+        let moves = board.generate_pseudo_legal_moves();
+
+        assert_eq!(moves.len(), 20);
+    }
+
+    #[test]
+    fn pseudo_legal_generation_includes_castling_when_available() {
+        let board = Board::from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1").unwrap();
+        let moves = board.generate_pseudo_legal_moves();
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(0, 4),
+            Square::from_rf(0, 6),
+            MoveKind::CastleKingside
+        )));
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(0, 4),
+            Square::from_rf(0, 2),
+            MoveKind::CastleQueenside
+        )));
     }
 }
 
