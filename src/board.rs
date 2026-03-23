@@ -1,4 +1,6 @@
-use crate::types::{CastlingRights, Color, Move, MoveKind, Piece, Square};
+use crate::attacks::{attack_table, bishop_attacks, queen_attacks, rook_attacks};
+use crate::bitboard::pop_lsb;
+use crate::types::{CastlingRights, Color, Move, Piece, Square};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FenError {
@@ -178,6 +180,62 @@ impl Board {
         }
 
         None
+    }
+
+    pub fn is_square_attacked(&self, square: Square, by: Color) -> bool {
+        let attacks = attack_table();
+        let target = square.to_bb();
+        let occupancy = self.all_occupancy();
+
+        let mut pawns = self.piece_bb(by, Piece::Pawn);
+        while pawns != 0 {
+            let from = pop_lsb(&mut pawns);
+            if attacks.pawn[by.index()][from.index()] & target != 0 {
+                return true;
+            }
+        }
+
+        let mut knights = self.piece_bb(by, Piece::Knight);
+        while knights != 0 {
+            let from = pop_lsb(&mut knights);
+            if attacks.knight[from.index()] & target != 0 {
+                return true;
+            }
+        }
+
+        let mut bishops = self.piece_bb(by, Piece::Bishop);
+        while bishops != 0 {
+            let from = pop_lsb(&mut bishops);
+            if bishop_attacks(from, occupancy) & target != 0 {
+                return true;
+            }
+        }
+
+        let mut rooks = self.piece_bb(by, Piece::Rook);
+        while rooks != 0 {
+            let from = pop_lsb(&mut rooks);
+            if rook_attacks(from, occupancy) & target != 0 {
+                return true;
+            }
+        }
+
+        let mut queens = self.piece_bb(by, Piece::Queen);
+        while queens != 0 {
+            let from = pop_lsb(&mut queens);
+            if queen_attacks(from, occupancy) & target != 0 {
+                return true;
+            }
+        }
+
+        let mut kings = self.piece_bb(by, Piece::King);
+        while kings != 0 {
+            let from = pop_lsb(&mut kings);
+            if attacks.king[from.index()] & target != 0 {
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn pretty_print(&self) {

@@ -1,7 +1,7 @@
 use crate::attacks::{attack_table, bishop_attacks, queen_attacks, rook_attacks};
 use crate::bitboard::pop_lsb;
 use crate::board::Board;
-use crate::types::{Color, Move, MoveKind, Piece, Square};
+use crate::types::{CastlingRights, Color, Move, MoveKind, Piece, Square};
 
 impl Board {
     pub fn generate_knight_moves(&self) -> Vec<Move> {
@@ -54,6 +54,91 @@ impl Board {
                 };
 
                 moves.push(Move::new(from, to, kind));
+            }
+        }
+
+        moves
+    }
+
+    pub fn generate_castling_moves(&self) -> Vec<Move> {
+        let us = self.side_to_move;
+        let them = us.opposite();
+        let rights = self.castling_rights();
+        let all_occupancy = self.all_occupancy();
+        let mut moves = Vec::new();
+
+        match us {
+            Color::White => {
+                let king_from = Square::from_rf(0, 4);
+
+                if self.piece_on(king_from) == Some((Color::White, Piece::King))
+                    && !self.is_square_attacked(king_from, them)
+                {
+                    if rights & CastlingRights::WHITE_KINGSIDE != 0
+                        && self.piece_on(Square::from_rf(0, 7)) == Some((Color::White, Piece::Rook))
+                    {
+                        let f1 = Square::from_rf(0, 5);
+                        let g1 = Square::from_rf(0, 6);
+
+                        if (f1.to_bb() | g1.to_bb()) & all_occupancy == 0
+                            && !self.is_square_attacked(f1, them)
+                            && !self.is_square_attacked(g1, them)
+                        {
+                            moves.push(Move::new(king_from, g1, MoveKind::CastleKingside));
+                        }
+                    }
+
+                    if rights & CastlingRights::WHITE_QUEENSIDE != 0
+                        && self.piece_on(Square::from_rf(0, 0)) == Some((Color::White, Piece::Rook))
+                    {
+                        let b1 = Square::from_rf(0, 1);
+                        let c1 = Square::from_rf(0, 2);
+                        let d1 = Square::from_rf(0, 3);
+
+                        if (b1.to_bb() | c1.to_bb() | d1.to_bb()) & all_occupancy == 0
+                            && !self.is_square_attacked(d1, them)
+                            && !self.is_square_attacked(c1, them)
+                        {
+                            moves.push(Move::new(king_from, c1, MoveKind::CastleQueenside));
+                        }
+                    }
+                }
+            }
+            Color::Black => {
+                let king_from = Square::from_rf(7, 4);
+
+                if self.piece_on(king_from) == Some((Color::Black, Piece::King))
+                    && !self.is_square_attacked(king_from, them)
+                {
+                    if rights & CastlingRights::BLACK_KINGSIDE != 0
+                        && self.piece_on(Square::from_rf(7, 7)) == Some((Color::Black, Piece::Rook))
+                    {
+                        let f8 = Square::from_rf(7, 5);
+                        let g8 = Square::from_rf(7, 6);
+
+                        if (f8.to_bb() | g8.to_bb()) & all_occupancy == 0
+                            && !self.is_square_attacked(f8, them)
+                            && !self.is_square_attacked(g8, them)
+                        {
+                            moves.push(Move::new(king_from, g8, MoveKind::CastleKingside));
+                        }
+                    }
+
+                    if rights & CastlingRights::BLACK_QUEENSIDE != 0
+                        && self.piece_on(Square::from_rf(7, 0)) == Some((Color::Black, Piece::Rook))
+                    {
+                        let b8 = Square::from_rf(7, 1);
+                        let c8 = Square::from_rf(7, 2);
+                        let d8 = Square::from_rf(7, 3);
+
+                        if (b8.to_bb() | c8.to_bb() | d8.to_bb()) & all_occupancy == 0
+                            && !self.is_square_attacked(d8, them)
+                            && !self.is_square_attacked(c8, them)
+                        {
+                            moves.push(Move::new(king_from, c8, MoveKind::CastleQueenside));
+                        }
+                    }
+                }
             }
         }
 
@@ -417,6 +502,48 @@ mod tests {
             Square::from_rf(2, 5),
             MoveKind::Quiet
         )));
+    }
+
+    #[test]
+    fn castling_generation_requires_clear_paths_and_rights() {
+        let board = Board::from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1").unwrap();
+        let moves = board.generate_castling_moves();
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(0, 4),
+            Square::from_rf(0, 6),
+            MoveKind::CastleKingside
+        )));
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(0, 4),
+            Square::from_rf(0, 2),
+            MoveKind::CastleQueenside
+        )));
+    }
+
+    #[test]
+    fn castling_generation_rejects_attacked_transit_square() {
+        let board = Board::from_fen("4kr2/8/8/8/8/8/8/R3K2R w KQ - 0 1").unwrap();
+        let moves = board.generate_castling_moves();
+
+        assert!(!moves.contains(&Move::new(
+            Square::from_rf(0, 4),
+            Square::from_rf(0, 6),
+            MoveKind::CastleKingside
+        )));
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(0, 4),
+            Square::from_rf(0, 2),
+            MoveKind::CastleQueenside
+        )));
+    }
+
+    #[test]
+    fn castling_generation_rejects_missing_rook_even_with_rights() {
+        let board = Board::from_fen("4k3/8/8/8/8/8/8/4K3 w KQ - 0 1").unwrap();
+        let moves = board.generate_castling_moves();
+
+        assert!(moves.is_empty());
     }
 }
 
