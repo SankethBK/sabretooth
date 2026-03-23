@@ -48,6 +48,10 @@ impl Piece {
 pub struct Square(pub u8);
 
 impl Square {
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+
     pub const fn rank(self) -> u8 {
         self.0 / 8
     }

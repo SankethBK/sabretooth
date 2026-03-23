@@ -236,7 +236,7 @@ impl Board {
 
         while knights != 0 {
             let from = pop_lsb(&mut knights);
-            let mut targets = attacks.knight[from.0 as usize] & !our_occupancy;
+            let mut targets = attacks.knight[from.index()] & !our_occupancy;
 
             while targets != 0 {
                 let to = pop_lsb(&mut targets);
@@ -264,7 +264,7 @@ impl Board {
 
         while kings != 0 {
             let from = pop_lsb(&mut kings);
-            let mut targets = attacks.king[from.0 as usize] & !our_occupancy;
+            let mut targets = attacks.king[from.index()] & !our_occupancy;
 
             while targets != 0 {
                 let to = pop_lsb(&mut targets);
@@ -356,7 +356,7 @@ impl Board {
                 }
             }
 
-            let mut targets = attacks.pawn[us.index()][from.0 as usize];
+            let mut targets = attacks.pawn[us.index()][from.index()];
             while targets != 0 {
                 let to = pop_lsb(&mut targets);
 

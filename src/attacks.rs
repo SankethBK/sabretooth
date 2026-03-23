@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn knight_attacks_from_center() {
-        let attacks = attack_table().knight[Square::from_rf(3, 3).0 as usize];
+        let attacks = attack_table().knight[Square::from_rf(3, 3).index()];
 
         assert_eq!(attacks.count_ones(), 8);
         assert_ne!(attacks & Square::from_rf(5, 4).to_bb(), 0);
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn knight_attacks_from_corner() {
-        let attacks = attack_table().knight[Square::from_rf(0, 0).0 as usize];
+        let attacks = attack_table().knight[Square::from_rf(0, 0).index()];
 
         assert_eq!(attacks.count_ones(), 2);
         assert_ne!(attacks & Square::from_rf(1, 2).to_bb(), 0);
@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn king_attacks_from_corner() {
-        let attacks = attack_table().king[Square::from_rf(0, 0).0 as usize];
+        let attacks = attack_table().king[Square::from_rf(0, 0).index()];
 
         assert_eq!(attacks.count_ones(), 3);
         assert_ne!(attacks & Square::from_rf(0, 1).to_bb(), 0);
@@ -134,8 +134,8 @@ mod tests {
 
     #[test]
     fn pawn_attacks_depend_on_color() {
-        let white = attack_table().pawn[Color::White.index()][Square::from_rf(3, 3).0 as usize];
-        let black = attack_table().pawn[Color::Black.index()][Square::from_rf(3, 3).0 as usize];
+        let white = attack_table().pawn[Color::White.index()][Square::from_rf(3, 3).index()];
+        let black = attack_table().pawn[Color::Black.index()][Square::from_rf(3, 3).index()];
 
         assert_eq!(white.count_ones(), 2);
         assert_eq!(black.count_ones(), 2);
