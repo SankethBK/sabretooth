@@ -87,7 +87,7 @@ impl Board {
                     }
 
                     let square = Square::from_rf(rank as u8, file as u8);
-                    board.set_piece(square, color, piece);
+                    board.put_piece(square, color, piece);
                     file += 1;
                 }
             }
@@ -117,6 +117,26 @@ impl Board {
         }
 
         Ok(board)
+    }
+
+    pub fn starting_position() -> Self {
+        Self::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+            .expect("starting position FEN must be valid")
+    }
+
+    pub fn piece_bb(&self, color: Color, piece: Piece) -> u64 {
+        self.pieces[color.index()][piece.index()]
+    }
+
+    pub fn occupancy(&self, color: Color) -> u64 {
+        self.pieces[color.index()]
+            .iter()
+            .copied()
+            .fold(0, |acc, bb| acc | bb)
+    }
+
+    pub fn all_occupancy(&self) -> u64 {
+        self.occupancy(Color::White) | self.occupancy(Color::Black)
     }
 
     pub fn side_to_move(&self) -> Color {
@@ -214,8 +234,17 @@ impl Board {
         // This should restore the board state to the previous position
     }
 
-    fn set_piece(&mut self, square: Square, color: Color, piece: Piece) {
+    fn put_piece(&mut self, square: Square, color: Color, piece: Piece) {
         self.pieces[color.index()][piece.index()] |= square.to_bb();
+    }
+
+    fn remove_piece(&mut self, square: Square, color: Color, piece: Piece) {
+        self.pieces[color.index()][piece.index()] &= !square.to_bb();
+    }
+
+    fn move_piece(&mut self, from: Square, to: Square, color: Color, piece: Piece) {
+        self.remove_piece(from, color, piece);
+        self.put_piece(to, color, piece);
     }
 }
 
@@ -284,8 +313,7 @@ mod tests {
 
     #[test]
     fn parses_starting_position_fen() {
-        let board =
-            Board::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
+        let board = Board::starting_position();
 
         assert_eq!(board.side_to_move(), Color::White);
         assert_eq!(
@@ -312,6 +340,11 @@ mod tests {
             Some((Color::Black, Piece::King))
         );
         assert_eq!(board.piece_on(Square::from_rf(3, 4)), None);
+        assert_eq!(board.piece_bb(Color::White, Piece::Pawn).count_ones(), 8);
+        assert_eq!(board.piece_bb(Color::Black, Piece::Pawn).count_ones(), 8);
+        assert_eq!(board.occupancy(Color::White).count_ones(), 16);
+        assert_eq!(board.occupancy(Color::Black).count_ones(), 16);
+        assert_eq!(board.all_occupancy().count_ones(), 32);
     }
 
     #[test]
@@ -343,5 +376,24 @@ mod tests {
             .expect_err("expected invalid piece placement");
 
         assert_eq!(err, FenError::InvalidPiecePlacement);
+    }
+
+    #[test]
+    fn put_remove_and_move_piece_update_bitboards() {
+        let mut board = Board::new();
+        let b1 = Square::from_rf(0, 1);
+        let c3 = Square::from_rf(2, 2);
+
+        board.put_piece(b1, Color::White, Piece::Knight);
+        assert_eq!(board.piece_on(b1), Some((Color::White, Piece::Knight)));
+        assert_eq!(board.occupancy(Color::White).count_ones(), 1);
+
+        board.move_piece(b1, c3, Color::White, Piece::Knight);
+        assert_eq!(board.piece_on(b1), None);
+        assert_eq!(board.piece_on(c3), Some((Color::White, Piece::Knight)));
+
+        board.remove_piece(c3, Color::White, Piece::Knight);
+        assert_eq!(board.piece_on(c3), None);
+        assert_eq!(board.occupancy(Color::White), 0);
     }
 }
