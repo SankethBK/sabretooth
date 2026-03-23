@@ -1,4 +1,4 @@
-use crate::attacks::attack_table;
+use crate::attacks::{attack_table, bishop_attacks, queen_attacks, rook_attacks};
 use crate::bitboard::pop_lsb;
 use crate::board::Board;
 use crate::types::{Color, Move, MoveKind, Piece, Square};
@@ -155,6 +155,50 @@ impl Board {
 
         moves
     }
+
+    pub fn generate_bishop_moves(&self) -> Vec<Move> {
+        self.generate_slider_moves(Piece::Bishop, bishop_attacks)
+    }
+
+    pub fn generate_rook_moves(&self) -> Vec<Move> {
+        self.generate_slider_moves(Piece::Rook, rook_attacks)
+    }
+
+    pub fn generate_queen_moves(&self) -> Vec<Move> {
+        self.generate_slider_moves(Piece::Queen, queen_attacks)
+    }
+
+    fn generate_slider_moves(
+        &self,
+        piece: Piece,
+        attack_fn: fn(Square, u64) -> u64,
+    ) -> Vec<Move> {
+        let us = self.side_to_move;
+        let our_occupancy = self.occupancy(us);
+        let their_occupancy = self.occupancy(us.opposite());
+        let all_occupancy = self.all_occupancy();
+
+        let mut pieces = self.piece_bb(us, piece);
+        let mut moves = Vec::new();
+
+        while pieces != 0 {
+            let from = pop_lsb(&mut pieces);
+            let mut targets = attack_fn(from, all_occupancy) & !our_occupancy;
+
+            while targets != 0 {
+                let to = pop_lsb(&mut targets);
+                let kind = if to.to_bb() & their_occupancy != 0 {
+                    MoveKind::Capture
+                } else {
+                    MoveKind::Quiet
+                };
+
+                moves.push(Move::new(from, to, kind));
+            }
+        }
+
+        moves
+    }
 }
 
 #[cfg(test)]
@@ -298,6 +342,81 @@ mod tests {
                 MoveKind::PromotionCapture(piece)
             )));
         }
+    }
+
+    #[test]
+    fn starting_position_has_no_bishop_rook_or_queen_moves() {
+        let board = Board::starting_position();
+
+        assert_eq!(board.generate_bishop_moves().len(), 0);
+        assert_eq!(board.generate_rook_moves().len(), 0);
+        assert_eq!(board.generate_queen_moves().len(), 0);
+    }
+
+    #[test]
+    fn bishop_move_generation_handles_quiets_and_captures() {
+        let board = Board::from_fen("8/8/5p2/8/3B4/8/1P6/8 w - - 0 1").unwrap();
+        let moves = board.generate_bishop_moves();
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(4, 4),
+            MoveKind::Quiet
+        )));
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(5, 5),
+            MoveKind::Capture
+        )));
+        assert!(!moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(1, 1),
+            MoveKind::Quiet
+        )));
+    }
+
+    #[test]
+    fn rook_move_generation_handles_quiets_and_captures() {
+        let board = Board::from_fen("8/8/3p4/8/3R1P2/8/8/8 w - - 0 1").unwrap();
+        let moves = board.generate_rook_moves();
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(4, 3),
+            MoveKind::Quiet
+        )));
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(5, 3),
+            MoveKind::Capture
+        )));
+        assert!(!moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(3, 6),
+            MoveKind::Quiet
+        )));
+    }
+
+    #[test]
+    fn queen_move_generation_combines_rook_and_bishop_patterns() {
+        let board = Board::from_fen("8/8/8/2p5/3Q4/5P2/8/8 w - - 0 1").unwrap();
+        let moves = board.generate_queen_moves();
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(4, 3),
+            MoveKind::Quiet
+        )));
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(4, 2),
+            MoveKind::Capture
+        )));
+        assert!(!moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(2, 5),
+            MoveKind::Quiet
+        )));
     }
 }
 

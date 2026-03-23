@@ -83,6 +83,18 @@ pub fn compute_pawn_attacks(color: Color, square: Square) -> Bitboard {
     compute_attacks_from_offsets(rank, file, &offsets)
 }
 
+pub fn rook_attacks(square: Square, occupancy: Bitboard) -> Bitboard {
+    ray_attacks(square, occupancy, &[(1, 0), (-1, 0), (0, 1), (0, -1)])
+}
+
+pub fn bishop_attacks(square: Square, occupancy: Bitboard) -> Bitboard {
+    ray_attacks(square, occupancy, &[(1, 1), (1, -1), (-1, 1), (-1, -1)])
+}
+
+pub fn queen_attacks(square: Square, occupancy: Bitboard) -> Bitboard {
+    rook_attacks(square, occupancy) | bishop_attacks(square, occupancy)
+}
+
 fn compute_attacks_from_offsets(rank: i8, file: i8, offsets: &[(i8, i8)]) -> Bitboard {
     let mut attacks = 0;
 
@@ -92,6 +104,31 @@ fn compute_attacks_from_offsets(rank: i8, file: i8, offsets: &[(i8, i8)]) -> Bit
 
         if (0..8).contains(&next_rank) && (0..8).contains(&next_file) {
             attacks |= Square::from_rf(next_rank as u8, next_file as u8).to_bb();
+        }
+    }
+
+    attacks
+}
+
+fn ray_attacks(square: Square, occupancy: Bitboard, directions: &[(i8, i8)]) -> Bitboard {
+    let mut attacks = 0;
+    let start_rank = square.rank() as i8;
+    let start_file = square.file() as i8;
+
+    for &(dr, df) in directions {
+        let mut rank = start_rank + dr;
+        let mut file = start_file + df;
+
+        while (0..8).contains(&rank) && (0..8).contains(&file) {
+            let target = Square::from_rf(rank as u8, file as u8);
+            attacks |= target.to_bb();
+
+            if target.to_bb() & occupancy != 0 {
+                break;
+            }
+
+            rank += dr;
+            file += df;
         }
     }
 
@@ -143,5 +180,59 @@ mod tests {
         assert_ne!(white & Square::from_rf(4, 4).to_bb(), 0);
         assert_ne!(black & Square::from_rf(2, 2).to_bb(), 0);
         assert_ne!(black & Square::from_rf(2, 4).to_bb(), 0);
+    }
+
+    #[test]
+    fn rook_attacks_from_center_on_empty_board() {
+        let attacks = rook_attacks(Square::from_rf(3, 3), 0);
+
+        assert_eq!(attacks.count_ones(), 14);
+        assert_ne!(attacks & Square::from_rf(3, 0).to_bb(), 0);
+        assert_ne!(attacks & Square::from_rf(3, 7).to_bb(), 0);
+        assert_ne!(attacks & Square::from_rf(0, 3).to_bb(), 0);
+        assert_ne!(attacks & Square::from_rf(7, 3).to_bb(), 0);
+    }
+
+    #[test]
+    fn rook_attacks_stop_after_first_blocker() {
+        let occupancy = Square::from_rf(3, 5).to_bb() | Square::from_rf(1, 3).to_bb();
+        let attacks = rook_attacks(Square::from_rf(3, 3), occupancy);
+
+        assert_ne!(attacks & Square::from_rf(3, 5).to_bb(), 0);
+        assert_eq!(attacks & Square::from_rf(3, 6).to_bb(), 0);
+        assert_ne!(attacks & Square::from_rf(1, 3).to_bb(), 0);
+        assert_eq!(attacks & Square::from_rf(0, 3).to_bb(), 0);
+    }
+
+    #[test]
+    fn bishop_attacks_from_center_on_empty_board() {
+        let attacks = bishop_attacks(Square::from_rf(3, 3), 0);
+
+        assert_eq!(attacks.count_ones(), 13);
+        assert_ne!(attacks & Square::from_rf(0, 0).to_bb(), 0);
+        assert_ne!(attacks & Square::from_rf(6, 6).to_bb(), 0);
+        assert_ne!(attacks & Square::from_rf(0, 6).to_bb(), 0);
+        assert_ne!(attacks & Square::from_rf(6, 0).to_bb(), 0);
+    }
+
+    #[test]
+    fn bishop_attacks_stop_after_first_blocker() {
+        let occupancy = Square::from_rf(5, 5).to_bb() | Square::from_rf(1, 5).to_bb();
+        let attacks = bishop_attacks(Square::from_rf(3, 3), occupancy);
+
+        assert_ne!(attacks & Square::from_rf(5, 5).to_bb(), 0);
+        assert_eq!(attacks & Square::from_rf(6, 6).to_bb(), 0);
+        assert_ne!(attacks & Square::from_rf(1, 5).to_bb(), 0);
+        assert_eq!(attacks & Square::from_rf(0, 6).to_bb(), 0);
+    }
+
+    #[test]
+    fn queen_attacks_are_rook_and_bishop_union() {
+        let occupancy = Square::from_rf(5, 3).to_bb() | Square::from_rf(5, 5).to_bb();
+        let rook = rook_attacks(Square::from_rf(3, 3), occupancy);
+        let bishop = bishop_attacks(Square::from_rf(3, 3), occupancy);
+        let queen = queen_attacks(Square::from_rf(3, 3), occupancy);
+
+        assert_eq!(queen, rook | bishop);
     }
 }
