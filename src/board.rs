@@ -239,6 +239,22 @@ impl Board {
         false
     }
 
+    pub fn king_square(&self, color: Color) -> Option<Square> {
+        let king_bb = self.piece_bb(color, Piece::King);
+        if king_bb == 0 {
+            None
+        } else {
+            Some(Square::from_index(king_bb.trailing_zeros() as u8))
+        }
+    }
+
+    pub fn is_in_check(&self, color: Color) -> bool {
+        let king_square = self
+            .king_square(color)
+            .expect("position must contain a king for check detection");
+        self.is_square_attacked(king_square, color.opposite())
+    }
+
     pub fn pretty_print(&self) {
         println!();
         for rank in (0..8).rev() {
@@ -282,7 +298,7 @@ impl Board {
         println!();
     }
 
-    fn make_move(&mut self, mv: Move) {
+    pub(crate) fn make_move(&mut self, mv: Move) {
         let us = self.side_to_move;
         let them = us.opposite();
 
@@ -403,7 +419,7 @@ impl Board {
         self.side_to_move = them;
     }
 
-    fn unmake_move(&mut self) {
+    pub(crate) fn unmake_move(&mut self) {
         let entry = self.history.pop().expect("unmake_move requires prior history");
         let mv = entry.mv;
 

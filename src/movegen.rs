@@ -4,6 +4,22 @@ use crate::board::Board;
 use crate::types::{CastlingRights, Color, Move, MoveKind, Piece, Square};
 
 impl Board {
+    pub fn generate_legal_moves(&mut self) -> Vec<Move> {
+        let us = self.side_to_move;
+        let pseudo = self.generate_pseudo_legal_moves();
+        let mut legal = Vec::new();
+
+        for mv in pseudo {
+            self.make_move(mv);
+            if !self.is_in_check(us) {
+                legal.push(mv);
+            }
+            self.unmake_move();
+        }
+
+        legal
+    }
+
     pub fn generate_pseudo_legal_moves(&self) -> Vec<Move> {
         let mut moves = Vec::new();
         moves.extend(self.generate_pawn_moves());
@@ -580,6 +596,43 @@ mod tests {
             Square::from_rf(0, 4),
             Square::from_rf(0, 2),
             MoveKind::CastleQueenside
+        )));
+    }
+
+    #[test]
+    fn legal_move_generation_matches_starting_position_count() {
+        let mut board = Board::starting_position();
+        let moves = board.generate_legal_moves();
+
+        assert_eq!(moves.len(), 20);
+    }
+
+    #[test]
+    fn legal_move_generation_filters_out_pinned_rook_moves() {
+        let mut board = Board::from_fen("4r3/8/8/8/8/8/4R3/4K3 w - - 0 1").unwrap();
+        let moves = board.generate_legal_moves();
+
+        assert!(!moves.contains(&Move::new(
+            Square::from_rf(1, 4),
+            Square::from_rf(1, 3),
+            MoveKind::Quiet
+        )));
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(1, 4),
+            Square::from_rf(2, 4),
+            MoveKind::Quiet
+        )));
+    }
+
+    #[test]
+    fn legal_move_generation_filters_out_king_move_into_check() {
+        let mut board = Board::from_fen("4r3/8/8/8/8/8/8/4K3 w - - 0 1").unwrap();
+        let moves = board.generate_legal_moves();
+
+        assert!(!moves.contains(&Move::new(
+            Square::from_rf(0, 4),
+            Square::from_rf(1, 4),
+            MoveKind::Quiet
         )));
     }
 }
