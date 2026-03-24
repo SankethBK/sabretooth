@@ -3,7 +3,11 @@ mod bitboard;
 mod board;
 mod movegen;
 mod types;
+mod uci;
 
 fn main() {
-    println!("Bitboard skeleton ready.");
+    let mut engine = uci::Engine::new();
+    if let Err(err) = engine.run() {
+        eprintln!("uci error: {err}");
+    }
 }
