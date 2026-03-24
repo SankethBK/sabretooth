@@ -1,6 +1,6 @@
 use crate::attacks::{attack_table, bishop_attacks, queen_attacks, rook_attacks};
 use crate::bitboard::pop_lsb;
-use crate::types::{CastlingRights, Color, Move, Piece, Square};
+use crate::types::{CastlingRights, Color, Move, MoveKind, Piece, Square};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FenError {
@@ -282,9 +282,123 @@ impl Board {
     }
 
     fn make_move(&mut self, mv: Move) {
-        // Implementation for making a move on the board
-        // This should update the pieces, side to move, castling rights, en passant square, and halfmove clock
-        // It should also push the current state to the history stack for unmaking moves later
+        let us = self.side_to_move;
+        let them = us.opposite();
+
+        let (color, moving_piece) = self
+            .piece_on(mv.from)
+            .expect("make_move requires a piece on the from square");
+        assert_eq!(color, us, "moving side must match side_to_move");
+
+        let captured_square = match mv.kind {
+            MoveKind::EnPassant => Some(match us {
+                Color::White => Square::from_rf(mv.to.rank() - 1, mv.to.file()),
+                Color::Black => Square::from_rf(mv.to.rank() + 1, mv.to.file()),
+            }),
+            MoveKind::Capture | MoveKind::PromotionCapture(_) => Some(mv.to),
+            _ => None,
+        };
+
+        let captured_piece =
+            captured_square.and_then(|sq| self.piece_on(sq).map(|(_, piece)| piece));
+
+        self.history.push(HistoryEntry {
+            mv,
+            captured: captured_piece,
+            castling_rights: self.castling_rights,
+            en_passant: self.en_passant,
+            halfmove_clock: self.halfmove_clock,
+        });
+
+        self.en_passant = None;
+
+        if let Some(square) = captured_square {
+            if let Some(piece) = captured_piece {
+                self.remove_piece(square, them, piece);
+                self.clear_castling_rights_for_rook_square(square);
+            }
+        }
+
+        match mv.kind {
+            MoveKind::Quiet | MoveKind::Capture | MoveKind::DoublePawnPush => {
+                self.move_piece(mv.from, mv.to, us, moving_piece);
+            }
+            MoveKind::Promotion(promoted) | MoveKind::PromotionCapture(promoted) => {
+                self.remove_piece(mv.from, us, Piece::Pawn);
+                self.put_piece(mv.to, us, promoted);
+            }
+            MoveKind::EnPassant => {
+                self.move_piece(mv.from, mv.to, us, Piece::Pawn);
+            }
+            MoveKind::CastleKingside => {
+                self.move_piece(mv.from, mv.to, us, Piece::King);
+                match us {
+                    Color::White => self.move_piece(
+                        Square::from_rf(0, 7),
+                        Square::from_rf(0, 5),
+                        Color::White,
+                        Piece::Rook,
+                    ),
+                    Color::Black => self.move_piece(
+                        Square::from_rf(7, 7),
+                        Square::from_rf(7, 5),
+                        Color::Black,
+                        Piece::Rook,
+                    ),
+                }
+            }
+            MoveKind::CastleQueenside => {
+                self.move_piece(mv.from, mv.to, us, Piece::King);
+                match us {
+                    Color::White => self.move_piece(
+                        Square::from_rf(0, 0),
+                        Square::from_rf(0, 3),
+                        Color::White,
+                        Piece::Rook,
+                    ),
+                    Color::Black => self.move_piece(
+                        Square::from_rf(7, 0),
+                        Square::from_rf(7, 3),
+                        Color::Black,
+                        Piece::Rook,
+                    ),
+                }
+            }
+        }
+
+        match moving_piece {
+            Piece::King => match us {
+                Color::White => {
+                    self.castling_rights &=
+                        !(CastlingRights::WHITE_KINGSIDE | CastlingRights::WHITE_QUEENSIDE)
+                }
+                Color::Black => {
+                    self.castling_rights &=
+                        !(CastlingRights::BLACK_KINGSIDE | CastlingRights::BLACK_QUEENSIDE)
+                }
+            },
+            Piece::Rook => self.clear_castling_rights_for_rook_square(mv.from),
+            _ => {}
+        }
+
+        if matches!(mv.kind, MoveKind::DoublePawnPush) {
+            self.en_passant = Some(match us {
+                Color::White => Square::from_rf(mv.from.rank() + 1, mv.from.file()),
+                Color::Black => Square::from_rf(mv.from.rank() - 1, mv.from.file()),
+            });
+        }
+
+        if moving_piece == Piece::Pawn || mv.is_capture() {
+            self.halfmove_clock = 0;
+        } else {
+            self.halfmove_clock += 1;
+        }
+
+        if us == Color::Black {
+            self.fullmove_number += 1;
+        }
+
+        self.side_to_move = them;
     }
 
     fn unmake_move(&mut self, mv: Move) {
@@ -303,6 +417,16 @@ impl Board {
     fn move_piece(&mut self, from: Square, to: Square, color: Color, piece: Piece) {
         self.remove_piece(from, color, piece);
         self.put_piece(to, color, piece);
+    }
+
+    fn clear_castling_rights_for_rook_square(&mut self, square: Square) {
+        match square {
+            Square(0) => self.castling_rights &= !CastlingRights::WHITE_QUEENSIDE,
+            Square(7) => self.castling_rights &= !CastlingRights::WHITE_KINGSIDE,
+            Square(56) => self.castling_rights &= !CastlingRights::BLACK_QUEENSIDE,
+            Square(63) => self.castling_rights &= !CastlingRights::BLACK_KINGSIDE,
+            _ => {}
+        }
     }
 }
 
@@ -453,5 +577,98 @@ mod tests {
         board.remove_piece(c3, Color::White, Piece::Knight);
         assert_eq!(board.piece_on(c3), None);
         assert_eq!(board.occupancy(Color::White), 0);
+    }
+
+    #[test]
+    fn make_move_handles_double_pawn_push() {
+        let mut board = Board::starting_position();
+        board.make_move(Move::new(
+            Square::from_rf(1, 4),
+            Square::from_rf(3, 4),
+            MoveKind::DoublePawnPush,
+        ));
+
+        assert_eq!(board.piece_on(Square::from_rf(1, 4)), None);
+        assert_eq!(
+            board.piece_on(Square::from_rf(3, 4)),
+            Some((Color::White, Piece::Pawn))
+        );
+        assert_eq!(board.en_passant(), Some(Square::from_rf(2, 4)));
+        assert_eq!(board.side_to_move(), Color::Black);
+        assert_eq!(board.halfmove_clock(), 0);
+        assert_eq!(board.fullmove_number(), 1);
+    }
+
+    #[test]
+    fn make_move_handles_en_passant() {
+        let mut board = Board::from_fen("8/8/8/3pP3/8/8/8/8 w - d6 0 1").unwrap();
+        board.make_move(Move::new(
+            Square::from_rf(4, 4),
+            Square::from_rf(5, 3),
+            MoveKind::EnPassant,
+        ));
+
+        assert_eq!(board.piece_on(Square::from_rf(4, 4)), None);
+        assert_eq!(board.piece_on(Square::from_rf(4, 3)), None);
+        assert_eq!(
+            board.piece_on(Square::from_rf(5, 3)),
+            Some((Color::White, Piece::Pawn))
+        );
+        assert_eq!(board.en_passant(), None);
+    }
+
+    #[test]
+    fn make_move_handles_promotion_capture() {
+        let mut board = Board::from_fen("1r6/P7/8/8/8/8/8/8 w - - 0 1").unwrap();
+        board.make_move(Move::new(
+            Square::from_rf(6, 0),
+            Square::from_rf(7, 1),
+            MoveKind::PromotionCapture(Piece::Queen),
+        ));
+
+        assert_eq!(board.piece_on(Square::from_rf(6, 0)), None);
+        assert_eq!(
+            board.piece_on(Square::from_rf(7, 1)),
+            Some((Color::White, Piece::Queen))
+        );
+        assert_eq!(board.halfmove_clock(), 0);
+    }
+
+    #[test]
+    fn make_move_handles_castling_and_castling_rights() {
+        let mut board = Board::from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1").unwrap();
+        board.make_move(Move::new(
+            Square::from_rf(0, 4),
+            Square::from_rf(0, 6),
+            MoveKind::CastleKingside,
+        ));
+
+        assert_eq!(board.piece_on(Square::from_rf(0, 4)), None);
+        assert_eq!(
+            board.piece_on(Square::from_rf(0, 6)),
+            Some((Color::White, Piece::King))
+        );
+        assert_eq!(
+            board.piece_on(Square::from_rf(0, 5)),
+            Some((Color::White, Piece::Rook))
+        );
+        assert_eq!(board.castling_rights() & CastlingRights::WHITE_KINGSIDE, 0);
+        assert_eq!(board.castling_rights() & CastlingRights::WHITE_QUEENSIDE, 0);
+    }
+
+    #[test]
+    fn make_move_handles_normal_capture() {
+        let mut board = Board::from_fen("8/8/8/3p4/4P3/8/8/8 w - - 0 1").unwrap();
+
+        board.make_move(Move::new(
+            Square::from_rf(4, 4),
+            Square::from_rf(3, 3),
+            MoveKind::Capture,
+        ));
+
+        assert_eq!(
+            board.piece_on(Square::from_rf(3, 3)),
+            Some((Color::White, Piece::Pawn))
+        );
     }
 }
