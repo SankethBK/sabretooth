@@ -13,16 +13,17 @@ pub enum FenError {
     InvalidFullmoveNumber,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct HistoryEntry {
     mv: Move,
     captured: Option<Piece>,
     castling_rights: u8,
     en_passant: Option<Square>,
     halfmove_clock: u32,
+    fullmove_number: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Board {
     pieces: [[u64; 6]; 2],
     pub(crate) side_to_move: Color,
@@ -308,6 +309,7 @@ impl Board {
             castling_rights: self.castling_rights,
             en_passant: self.en_passant,
             halfmove_clock: self.halfmove_clock,
+            fullmove_number: self.fullmove_number,
         });
 
         self.en_passant = None;
@@ -401,9 +403,107 @@ impl Board {
         self.side_to_move = them;
     }
 
-    fn unmake_move(&mut self, mv: Move) {
-        // Implementation for unmaking a move on the board
-        // This should restore the board state to the previous position
+    fn unmake_move(&mut self) {
+        let entry = self.history.pop().expect("unmake_move requires prior history");
+        let mv = entry.mv;
+
+        self.side_to_move = self.side_to_move.opposite();
+        let us = self.side_to_move;
+        let them = us.opposite();
+
+        self.castling_rights = entry.castling_rights;
+        self.en_passant = entry.en_passant;
+        self.halfmove_clock = entry.halfmove_clock;
+        self.fullmove_number = entry.fullmove_number;
+
+        match mv.kind {
+            MoveKind::Quiet | MoveKind::DoublePawnPush => {
+                let piece = self
+                    .piece_on(mv.to)
+                    .map(|(_, piece)| piece)
+                    .expect("quiet move destination must contain moving piece");
+                self.move_piece(mv.to, mv.from, us, piece);
+            }
+            MoveKind::Capture => {
+                let piece = self
+                    .piece_on(mv.to)
+                    .map(|(_, piece)| piece)
+                    .expect("capture destination must contain moving piece");
+                self.move_piece(mv.to, mv.from, us, piece);
+                let captured = entry
+                    .captured
+                    .expect("capture history must record captured piece");
+                self.put_piece(mv.to, them, captured);
+            }
+            MoveKind::EnPassant => {
+                self.move_piece(mv.to, mv.from, us, Piece::Pawn);
+                let captured_square = match us {
+                    Color::White => Square::from_rf(mv.to.rank() - 1, mv.to.file()),
+                    Color::Black => Square::from_rf(mv.to.rank() + 1, mv.to.file()),
+                };
+                self.put_piece(captured_square, them, Piece::Pawn);
+            }
+            MoveKind::Promotion(_) => {
+                let promoted = self
+                    .piece_on(mv.to)
+                    .map(|(_, piece)| piece)
+                    .expect("promotion destination must contain promoted piece");
+                self.remove_piece(mv.to, us, promoted);
+                self.put_piece(mv.from, us, Piece::Pawn);
+            }
+            MoveKind::PromotionCapture(_) => {
+                let promoted = self
+                    .piece_on(mv.to)
+                    .map(|(_, piece)| piece)
+                    .expect("promotion capture destination must contain promoted piece");
+                self.remove_piece(mv.to, us, promoted);
+                self.put_piece(mv.from, us, Piece::Pawn);
+                let captured = entry
+                    .captured
+                    .expect("promotion capture history must record captured piece");
+                self.put_piece(mv.to, them, captured);
+            }
+            MoveKind::CastleKingside => match us {
+                Color::White => {
+                    self.move_piece(mv.to, mv.from, Color::White, Piece::King);
+                    self.move_piece(
+                        Square::from_rf(0, 5),
+                        Square::from_rf(0, 7),
+                        Color::White,
+                        Piece::Rook,
+                    );
+                }
+                Color::Black => {
+                    self.move_piece(mv.to, mv.from, Color::Black, Piece::King);
+                    self.move_piece(
+                        Square::from_rf(7, 5),
+                        Square::from_rf(7, 7),
+                        Color::Black,
+                        Piece::Rook,
+                    );
+                }
+            },
+            MoveKind::CastleQueenside => match us {
+                Color::White => {
+                    self.move_piece(mv.to, mv.from, Color::White, Piece::King);
+                    self.move_piece(
+                        Square::from_rf(0, 3),
+                        Square::from_rf(0, 0),
+                        Color::White,
+                        Piece::Rook,
+                    );
+                }
+                Color::Black => {
+                    self.move_piece(mv.to, mv.from, Color::Black, Piece::King);
+                    self.move_piece(
+                        Square::from_rf(7, 3),
+                        Square::from_rf(7, 0),
+                        Color::Black,
+                        Piece::Rook,
+                    );
+                }
+            },
+        }
     }
 
     fn put_piece(&mut self, square: Square, color: Color, piece: Piece) {
@@ -661,7 +761,7 @@ mod tests {
         let mut board = Board::from_fen("8/8/8/3p4/4P3/8/8/8 w - - 0 1").unwrap();
 
         board.make_move(Move::new(
-            Square::from_rf(4, 4),
+            Square::from_rf(3, 4),
             Square::from_rf(3, 3),
             MoveKind::Capture,
         ));
@@ -670,5 +770,65 @@ mod tests {
             board.piece_on(Square::from_rf(3, 3)),
             Some((Color::White, Piece::Pawn))
         );
+    }
+
+    #[test]
+    fn unmake_move_reverts_double_pawn_push() {
+        let mut board = Board::starting_position();
+        let original = board.clone();
+
+        board.make_move(Move::new(
+            Square::from_rf(1, 4),
+            Square::from_rf(3, 4),
+            MoveKind::DoublePawnPush,
+        ));
+        board.unmake_move();
+
+        assert_eq!(board, original);
+    }
+
+    #[test]
+    fn unmake_move_reverts_en_passant() {
+        let mut board = Board::from_fen("8/8/8/3pP3/8/8/8/8 w - d6 0 1").unwrap();
+        let original = board.clone();
+
+        board.make_move(Move::new(
+            Square::from_rf(4, 4),
+            Square::from_rf(5, 3),
+            MoveKind::EnPassant,
+        ));
+        board.unmake_move();
+
+        assert_eq!(board, original);
+    }
+
+    #[test]
+    fn unmake_move_reverts_promotion_capture() {
+        let mut board = Board::from_fen("1r6/P7/8/8/8/8/8/8 w - - 0 1").unwrap();
+        let original = board.clone();
+
+        board.make_move(Move::new(
+            Square::from_rf(6, 0),
+            Square::from_rf(7, 1),
+            MoveKind::PromotionCapture(Piece::Queen),
+        ));
+        board.unmake_move();
+
+        assert_eq!(board, original);
+    }
+
+    #[test]
+    fn unmake_move_reverts_castling() {
+        let mut board = Board::from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1").unwrap();
+        let original = board.clone();
+
+        board.make_move(Move::new(
+            Square::from_rf(0, 4),
+            Square::from_rf(0, 6),
+            MoveKind::CastleKingside,
+        ));
+        board.unmake_move();
+
+        assert_eq!(board, original);
     }
 }
