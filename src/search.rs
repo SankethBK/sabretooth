@@ -1,23 +1,27 @@
 use crate::board::Board;
 use crate::types::{Color, Move};
 
-pub const DEFAULT_SEARCH_DEPTH: u32 = 2;
+pub const DEFAULT_SEARCH_DEPTH: u32 = 6;
 const MATE_SCORE: i32 = 1_000_000;
 
 pub fn find_best_move(board: &mut Board, depth: u32) -> Option<Move> {
     let legal_moves = board.generate_legal_moves();
     let mut best_move = None;
     let mut best_score = i32::MIN;
+    let mut alpha = i32::MIN + 1;
+    let beta = i32::MAX;
 
     for mv in legal_moves {
         board.make_move(mv);
-        let score = -negamax(board, depth.saturating_sub(1));
+        let score = -negamax(board, depth.saturating_sub(1), -beta, -alpha);
         board.unmake_move();
 
         if score > best_score {
             best_score = score;
             best_move = Some(mv);
         }
+
+        alpha = alpha.max(score);
     }
 
     best_move
@@ -29,7 +33,7 @@ pub fn parse_go_depth(command: &str) -> Option<u32> {
     tokens.get(depth_idx + 1)?.parse::<u32>().ok()
 }
 
-fn negamax(board: &mut Board, depth: u32) -> i32 {
+fn negamax(board: &mut Board, depth: u32, mut alpha: i32, beta: i32) -> i32 {
     if depth == 0 {
         return side_to_move_eval(board);
     }
@@ -47,9 +51,14 @@ fn negamax(board: &mut Board, depth: u32) -> i32 {
 
     for mv in legal_moves {
         board.make_move(mv);
-        let score = -negamax(board, depth - 1);
+        let score = -negamax(board, depth - 1, -beta, -alpha);
         board.unmake_move();
         best_score = best_score.max(score);
+        alpha = alpha.max(score);
+
+        if alpha >= beta {
+            break;
+        }
     }
 
     best_score
