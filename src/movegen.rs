@@ -48,6 +48,9 @@ impl Board {
             while targets != 0 {
                 let to = pop_lsb(&mut targets);
                 let kind = if to.to_bb() & their_occupancy != 0 {
+                    if self.piece_on(to) == Some((us.opposite(), Piece::King)) {
+                        continue;
+                    }
                     MoveKind::Capture
                 } else {
                     MoveKind::Quiet
@@ -76,6 +79,9 @@ impl Board {
             while targets != 0 {
                 let to = pop_lsb(&mut targets);
                 let kind = if to.to_bb() & their_occupancy != 0 {
+                    if self.piece_on(to) == Some((us.opposite(), Piece::King)) {
+                        continue;
+                    }
                     MoveKind::Capture
                 } else {
                     MoveKind::Quiet
@@ -253,6 +259,9 @@ impl Board {
                 let to = pop_lsb(&mut targets);
 
                 if to.to_bb() & their_occupancy != 0 {
+                    if self.piece_on(to) == Some((them, Piece::King)) {
+                        continue;
+                    }
                     if is_promotion_square(us, to) {
                         for piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
                             moves.push(Move::new(from, to, MoveKind::PromotionCapture(piece)));
@@ -297,6 +306,9 @@ impl Board {
             while targets != 0 {
                 let to = pop_lsb(&mut targets);
                 let kind = if to.to_bb() & their_occupancy != 0 {
+                    if self.piece_on(to) == Some((us.opposite(), Piece::King)) {
+                        continue;
+                    }
                     MoveKind::Capture
                 } else {
                     MoveKind::Quiet
