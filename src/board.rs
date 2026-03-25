@@ -255,6 +255,25 @@ impl Board {
         self.is_square_attacked(king_square, color.opposite())
     }
 
+    pub fn evaluate_material(&self) -> i32 {
+        let mut score = 0;
+
+        for piece in [
+            Piece::Pawn,
+            Piece::Knight,
+            Piece::Bishop,
+            Piece::Rook,
+            Piece::Queen,
+            Piece::King,
+        ] {
+            let value = piece.score();
+            score += self.piece_bb(Color::White, piece).count_ones() as i32 * value;
+            score -= self.piece_bb(Color::Black, piece).count_ones() as i32 * value;
+        }
+
+        score
+    }
+
     pub fn pretty_print(&self) {
         println!();
         for rank in (0..8).rev() {

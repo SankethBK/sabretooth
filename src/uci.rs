@@ -1,9 +1,7 @@
 use std::io::{self, BufRead, Write};
 
-use rand::seq::SliceRandom;
-
 use crate::board::Board;
-use crate::types::{Move, MoveKind, Piece, Square};
+use crate::types::{Color, Move, MoveKind, Piece, Square};
 
 pub struct Engine {
     board: Board,
@@ -108,16 +106,38 @@ impl Engine {
     }
 
     fn handle_go<W: Write>(&mut self, out: &mut W) -> io::Result<()> {
-        let legal_moves = self.board.generate_legal_moves();
-        let mut rng = rand::thread_rng();
-
-        if let Some(bestmove) = legal_moves.choose(&mut rng).copied() {
+        if let Some(bestmove) = self.pick_best_move_1ply() {
             writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
         } else {
             writeln!(out, "bestmove 0000")?;
         }
 
         Ok(())
+    }
+
+    fn pick_best_move_1ply(&mut self) -> Option<Move> {
+        let us = self.board.side_to_move();
+        let legal_moves = self.board.generate_legal_moves();
+        let mut best_move = None;
+        let mut best_score = if us == Color::White { i32::MIN } else { i32::MAX };
+
+        for mv in legal_moves {
+            self.board.make_move(mv);
+            let score = self.board.evaluate_material();
+            self.board.unmake_move();
+
+            let is_better = match us {
+                Color::White => score > best_score,
+                Color::Black => score < best_score,
+            };
+
+            if is_better {
+                best_score = score;
+                best_move = Some(mv);
+            }
+        }
+
+        best_move
     }
 }
 
@@ -195,5 +215,18 @@ mod tests {
                 MoveKind::DoublePawnPush
             )
         );
+    }
+
+    #[test]
+    fn pick_best_move_1ply_prefers_winning_material() {
+        let mut engine = Engine {
+            board: Board::from_fen("4k3/8/8/8/2q5/8/1N6/4K3 w - - 0 1").unwrap(),
+        };
+
+        let best = engine
+            .pick_best_move_1ply()
+            .expect("expected at least one legal move");
+
+        assert_eq!(move_to_uci(best), "b2c4");
     }
 }
