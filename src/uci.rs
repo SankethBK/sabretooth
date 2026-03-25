@@ -1,10 +1,8 @@
 use std::io::{self, BufRead, Write};
 
 use crate::board::Board;
-use crate::types::{Color, Move, MoveKind, Piece, Square};
-
-const DEFAULT_SEARCH_DEPTH: u32 = 2;
-const MATE_SCORE: i32 = 1_000_000;
+use crate::search::{DEFAULT_SEARCH_DEPTH, find_best_move, parse_go_depth};
+use crate::types::{Move, MoveKind, Piece, Square};
 
 pub struct Engine {
     board: Board,
@@ -111,7 +109,7 @@ impl Engine {
     fn handle_go<W: Write>(&mut self, command: &str, out: &mut W) -> io::Result<()> {
         let depth = parse_go_depth(command).unwrap_or(DEFAULT_SEARCH_DEPTH);
 
-        if let Some(bestmove) = self.search_best_move(depth) {
+        if let Some(bestmove) = find_best_move(&mut self.board, depth) {
             writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
         } else {
             writeln!(out, "bestmove 0000")?;
@@ -119,69 +117,10 @@ impl Engine {
 
         Ok(())
     }
-
-    fn search_best_move(&mut self, depth: u32) -> Option<Move> {
-        let legal_moves = self.board.generate_legal_moves();
-        let mut best_move = None;
-        let mut best_score = i32::MIN;
-
-        for mv in legal_moves {
-            self.board.make_move(mv);
-            let score = -self.negamax(depth.saturating_sub(1));
-            self.board.unmake_move();
-
-            if score > best_score {
-                best_score = score;
-                best_move = Some(mv);
-            }
-        }
-
-        best_move
-    }
-
-    fn negamax(&mut self, depth: u32) -> i32 {
-        if depth == 0 {
-            return self.side_to_move_eval();
-        }
-
-        let legal_moves = self.board.generate_legal_moves();
-        if legal_moves.is_empty() {
-            return if self.board.is_in_check(self.board.side_to_move()) {
-                -MATE_SCORE
-            } else {
-                0
-            };
-        }
-
-        let mut best_score = i32::MIN;
-
-        for mv in legal_moves {
-            self.board.make_move(mv);
-            let score = -self.negamax(depth - 1);
-            self.board.unmake_move();
-            best_score = best_score.max(score);
-        }
-
-        best_score
-    }
-
-    fn side_to_move_eval(&self) -> i32 {
-        let eval = self.board.evaluate_material();
-        match self.board.side_to_move() {
-            Color::White => eval,
-            Color::Black => -eval,
-        }
-    }
 }
 
 fn invalid_input(err: impl std::fmt::Debug) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, format!("{err:?}"))
-}
-
-fn parse_go_depth(command: &str) -> Option<u32> {
-    let tokens: Vec<&str> = command.split_whitespace().collect();
-    let depth_idx = tokens.iter().position(|&token| token == "depth")?;
-    tokens.get(depth_idx + 1)?.parse::<u32>().ok()
 }
 
 pub fn move_to_uci(mv: Move) -> String {
@@ -254,37 +193,5 @@ mod tests {
                 MoveKind::DoublePawnPush
             )
         );
-    }
-
-    #[test]
-    fn depth_one_search_prefers_winning_material() {
-        let mut engine = Engine {
-            board: Board::from_fen("4k3/8/8/8/2q5/8/1N6/4K3 w - - 0 1").unwrap(),
-        };
-
-        let best = engine
-            .search_best_move(1)
-            .expect("expected at least one legal move");
-
-        assert_eq!(move_to_uci(best), "b2c4");
-    }
-
-    #[test]
-    fn depth_two_search_finds_mate_in_one() {
-        let mut engine = Engine {
-            board: Board::from_fen("6k1/5Q2/6K1/8/8/8/8/8 w - - 0 1").unwrap(),
-        };
-
-        let best = engine
-            .search_best_move(2)
-            .expect("expected at least one legal move");
-
-        assert_eq!(move_to_uci(best), "f7g7");
-    }
-
-    #[test]
-    fn parse_go_depth_reads_requested_depth() {
-        assert_eq!(parse_go_depth("go depth 2"), Some(2));
-        assert_eq!(parse_go_depth("go movetime 100"), None);
     }
 }
