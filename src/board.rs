@@ -2,6 +2,30 @@ use crate::attacks::{attack_table, bishop_attacks, queen_attacks, rook_attacks};
 use crate::bitboard::pop_lsb;
 use crate::types::{CastlingRights, Color, Move, MoveKind, Piece, Square};
 
+const PAWN_PST: [i32; 64] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 5, 10, 10, -20, -20, 10, 10, 5, 5, -5, -10, 0, 0, -10, -5, 5, 0, 0, 0,
+    25, 25, 0, 0, 0, 5, 5, 10, 30, 30, 10, 5, 5, 10, 10, 20, 35, 35, 20, 10, 10, 50, 50, 50, 50,
+    50, 50, 50, 50, 0, 0, 0, 0, 0, 0, 0, 0,
+];
+
+const KNIGHT_PST: [i32; 64] = [
+    -50, -40, -30, -30, -30, -30, -40, -50, -40, -20, 0, 5, 5, 0, -20, -40, -30, 5, 15, 20, 20, 15,
+    5, -30, -30, 10, 20, 25, 25, 20, 10, -30, -30, 5, 20, 25, 25, 20, 5, -30, -30, 0, 15, 20, 20,
+    15, 0, -30, -40, -20, 0, 0, 0, 0, -20, -40, -50, -40, -30, -30, -30, -30, -40, -50,
+];
+
+const BISHOP_PST: [i32; 64] = [
+    -20, -10, -10, -10, -10, -10, -10, -20, -10, 5, 0, 0, 0, 0, 5, -10, -10, 10, 10, 10, 10, 10,
+    10, -10, -10, 0, 10, 15, 15, 10, 0, -10, -10, 5, 5, 15, 15, 5, 5, -10, -10, 0, 5, 10, 10, 5, 0,
+    -10, -10, 0, 0, 0, 0, 0, 0, -10, -20, -10, -10, -10, -10, -10, -10, -20,
+];
+
+const KING_PST: [i32; 64] = [
+    -40, -40, -40, -50, -50, -40, -40, -40, -30, -30, -30, -40, -40, -30, -30, -30, -20, -20, -20,
+    -30, -30, -20, -20, -20, -10, -10, -10, -20, -20, -10, -10, -10, 0, 0, -10, -20, -20, -10, 0,
+    0, 10, 10, 0, -10, -10, 0, 10, 10, 25, 25, 10, 0, 0, 10, 25, 25, 20, 30, 10, 0, 0, 10, 30, 20,
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FenError {
     InvalidFieldCount,
@@ -274,6 +298,29 @@ impl Board {
         score
     }
 
+    pub fn evaluate(&self) -> i32 {
+        let mut score = self.evaluate_material();
+
+        for color in [Color::White, Color::Black] {
+            let sign = if color == Color::White { 1 } else { -1 };
+
+            score += sign * self.evaluate_piece_positions(color, Piece::Pawn, &PAWN_PST);
+            score += sign * self.evaluate_piece_positions(color, Piece::Knight, &KNIGHT_PST);
+            score += sign * self.evaluate_piece_positions(color, Piece::Bishop, &BISHOP_PST);
+            score += sign * self.evaluate_piece_positions(color, Piece::King, &KING_PST);
+
+            if self.piece_on(castled_kingside_square(color)) == Some((color, Piece::King)) {
+                score += sign * 35;
+            }
+
+            if self.piece_on(castled_queenside_square(color)) == Some((color, Piece::King)) {
+                score += sign * 20;
+            }
+        }
+
+        score
+    }
+
     pub fn pretty_print(&self) {
         println!();
         for rank in (0..8).rev() {
@@ -439,7 +486,10 @@ impl Board {
     }
 
     pub(crate) fn unmake_move(&mut self) {
-        let entry = self.history.pop().expect("unmake_move requires prior history");
+        let entry = self
+            .history
+            .pop()
+            .expect("unmake_move requires prior history");
         let mv = entry.mv;
 
         self.side_to_move = self.side_to_move.opposite();
@@ -562,6 +612,39 @@ impl Board {
             Square(63) => self.castling_rights &= !CastlingRights::BLACK_KINGSIDE,
             _ => {}
         }
+    }
+
+    fn evaluate_piece_positions(&self, color: Color, piece: Piece, table: &[i32; 64]) -> i32 {
+        let mut score = 0;
+        let mut pieces = self.piece_bb(color, piece);
+
+        while pieces != 0 {
+            let square = pop_lsb(&mut pieces);
+            score += table[pst_index(square, color)];
+        }
+
+        score
+    }
+}
+
+fn pst_index(square: Square, color: Color) -> usize {
+    match color {
+        Color::White => square.index(),
+        Color::Black => Square::from_rf(7 - square.rank(), square.file()).index(),
+    }
+}
+
+fn castled_kingside_square(color: Color) -> Square {
+    match color {
+        Color::White => Square::from_rf(0, 6),
+        Color::Black => Square::from_rf(7, 6),
+    }
+}
+
+fn castled_queenside_square(color: Color) -> Square {
+    match color {
+        Color::White => Square::from_rf(0, 2),
+        Color::Black => Square::from_rf(7, 2),
     }
 }
 
@@ -865,5 +948,21 @@ mod tests {
         board.unmake_move();
 
         assert_eq!(board, original);
+    }
+
+    #[test]
+    fn evaluation_prefers_developed_knight_to_back_rank_knight() {
+        let undeveloped = Board::from_fen("4k3/8/8/8/8/8/8/1N2K3 w - - 0 1").unwrap();
+        let developed = Board::from_fen("4k3/8/8/8/8/2N5/8/4K3 w - - 0 1").unwrap();
+
+        assert!(developed.evaluate() > undeveloped.evaluate());
+    }
+
+    #[test]
+    fn evaluation_prefers_castled_king() {
+        let uncastled = Board::from_fen("4k3/8/8/8/8/8/8/R3K2R w - - 0 1").unwrap();
+        let castled = Board::from_fen("4k3/8/8/8/8/8/8/R4RK1 w - - 0 1").unwrap();
+
+        assert!(castled.evaluate() > uncastled.evaluate());
     }
 }

@@ -13,7 +13,7 @@ pub fn find_best_move(board: &mut Board, depth: u32) -> Option<Move> {
 
     for mv in legal_moves {
         board.make_move(mv);
-        let score = -negamax(board, depth.saturating_sub(1), -beta, -alpha);
+        let score = -negamax(board, depth.saturating_sub(1), -beta, -alpha, 1);
         board.unmake_move();
 
         if score > best_score {
@@ -33,7 +33,7 @@ pub fn parse_go_depth(command: &str) -> Option<u32> {
     tokens.get(depth_idx + 1)?.parse::<u32>().ok()
 }
 
-fn negamax(board: &mut Board, depth: u32, mut alpha: i32, beta: i32) -> i32 {
+fn negamax(board: &mut Board, depth: u32, mut alpha: i32, beta: i32, ply: u32) -> i32 {
     if depth == 0 {
         return side_to_move_eval(board);
     }
@@ -41,7 +41,7 @@ fn negamax(board: &mut Board, depth: u32, mut alpha: i32, beta: i32) -> i32 {
     let legal_moves = board.generate_legal_moves();
     if legal_moves.is_empty() {
         return if board.is_in_check(board.side_to_move()) {
-            -MATE_SCORE
+            -MATE_SCORE + ply as i32
         } else {
             0
         };
@@ -51,7 +51,7 @@ fn negamax(board: &mut Board, depth: u32, mut alpha: i32, beta: i32) -> i32 {
 
     for mv in legal_moves {
         board.make_move(mv);
-        let score = -negamax(board, depth - 1, -beta, -alpha);
+        let score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
         board.unmake_move();
         best_score = best_score.max(score);
         alpha = alpha.max(score);
@@ -65,7 +65,7 @@ fn negamax(board: &mut Board, depth: u32, mut alpha: i32, beta: i32) -> i32 {
 }
 
 fn side_to_move_eval(board: &Board) -> i32 {
-    let eval = board.evaluate_material();
+    let eval = board.evaluate();
     match board.side_to_move() {
         Color::White => eval,
         Color::Black => -eval,
@@ -92,6 +92,18 @@ mod tests {
         let best = find_best_move(&mut board, 2).expect("expected at least one legal move");
 
         assert_eq!(move_to_uci(best), "f7g7");
+    }
+
+    #[test]
+    fn checkmate_score_prefers_faster_mates() {
+        let mut board = Board::from_fen("6k1/6Q1/6K1/8/8/8/8/8 b - - 0 1").unwrap();
+
+        let immediate_mate = negamax(&mut board, 1, i32::MIN + 1, i32::MAX, 1);
+        let slower_mate = negamax(&mut board, 1, i32::MIN + 1, i32::MAX, 3);
+
+        assert_eq!(immediate_mate, -MATE_SCORE + 1);
+        assert_eq!(slower_mate, -MATE_SCORE + 3);
+        assert!(immediate_mate < slower_mate);
     }
 
     #[test]
