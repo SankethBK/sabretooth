@@ -1,17 +1,19 @@
 use std::io::{self, BufRead, Write};
 
 use crate::board::Board;
-use crate::search::{DEFAULT_SEARCH_DEPTH, find_best_move, parse_go_depth};
-use crate::types::{Move, MoveKind, Piece, Square};
+use crate::search::{DEFAULT_SEARCH_DEPTH, SearchResult, parse_go_depth, search};
+use crate::types::{Color, Move, MoveKind, Piece, Square};
 
 pub struct Engine {
     board: Board,
+    last_search: Option<(u32, SearchResult)>,
 }
 
 impl Engine {
     pub fn new() -> Self {
         Self {
             board: Board::starting_position(),
+            last_search: None,
         }
     }
 
@@ -43,6 +45,13 @@ impl Engine {
             }
             "ucinewgame" => {
                 self.board = Board::starting_position();
+                self.last_search = None;
+            }
+            "eval" => {
+                self.handle_eval(out)?;
+            }
+            "lasteval" => {
+                self.handle_last_eval(out)?;
             }
             "quit" => return Ok(false),
             _ if trimmed.starts_with("position ") => {
@@ -103,13 +112,50 @@ impl Engine {
         }
 
         self.board = board;
+        self.last_search = None;
         Ok(())
     }
 
     fn handle_go<W: Write>(&mut self, command: &str, out: &mut W) -> io::Result<()> {
         let depth = parse_go_depth(command).unwrap_or(DEFAULT_SEARCH_DEPTH);
+        let result = search(&mut self.board, depth);
+        self.last_search = Some((depth, result));
 
-        if let Some(bestmove) = find_best_move(&mut self.board, depth) {
+        if let Some(bestmove) = result.best_move {
+            writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
+        } else {
+            writeln!(out, "bestmove 0000")?;
+        }
+
+        Ok(())
+    }
+
+    fn handle_eval<W: Write>(&self, out: &mut W) -> io::Result<()> {
+        let eval = self.board.evaluate_breakdown();
+        let stm = match self.board.side_to_move() {
+            Color::White => eval.total,
+            Color::Black => -eval.total,
+        };
+
+        writeln!(out, "material {}", eval.material)?;
+        writeln!(out, "pst {}", eval.pst)?;
+        writeln!(out, "castling {}", eval.castling)?;
+        writeln!(out, "total {}", eval.total)?;
+        writeln!(out, "stm {}", stm)?;
+
+        Ok(())
+    }
+
+    fn handle_last_eval<W: Write>(&self, out: &mut W) -> io::Result<()> {
+        let Some((depth, result)) = self.last_search else {
+            writeln!(out, "no search has been run")?;
+            return Ok(());
+        };
+
+        writeln!(out, "depth {}", depth)?;
+        writeln!(out, "search_score {}", result.score)?;
+
+        if let Some(bestmove) = result.best_move {
             writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
         } else {
             writeln!(out, "bestmove 0000")?;
@@ -193,5 +239,49 @@ mod tests {
                 MoveKind::DoublePawnPush
             )
         );
+    }
+
+    #[test]
+    fn eval_command_prints_breakdown() {
+        let engine = Engine {
+            board: Board::starting_position(),
+            last_search: None,
+        };
+        let mut output = Vec::new();
+
+        engine.handle_eval(&mut output).unwrap();
+
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("material 0"));
+        assert!(text.contains("pst 0"));
+        assert!(text.contains("castling 0"));
+        assert!(text.contains("total 0"));
+        assert!(text.contains("stm 0"));
+    }
+
+    #[test]
+    fn lasteval_prints_last_search_result() {
+        let engine = Engine {
+            board: Board::starting_position(),
+            last_search: Some((
+                4,
+                SearchResult {
+                    best_move: Some(Move::new(
+                        Square::from_rf(1, 4),
+                        Square::from_rf(3, 4),
+                        MoveKind::DoublePawnPush,
+                    )),
+                    score: 123,
+                },
+            )),
+        };
+        let mut output = Vec::new();
+
+        engine.handle_last_eval(&mut output).unwrap();
+
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("depth 4"));
+        assert!(text.contains("search_score 123"));
+        assert!(text.contains("bestmove e2e4"));
     }
 }

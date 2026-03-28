@@ -37,6 +37,14 @@ pub enum FenError {
     InvalidFullmoveNumber,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EvalBreakdown {
+    pub material: i32,
+    pub pst: i32,
+    pub castling: i32,
+    pub total: i32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HistoryEntry {
     mv: Move,
@@ -299,26 +307,37 @@ impl Board {
     }
 
     pub fn evaluate(&self) -> i32 {
-        let mut score = self.evaluate_material();
+        self.evaluate_breakdown().total
+    }
+
+    pub fn evaluate_breakdown(&self) -> EvalBreakdown {
+        let material = self.evaluate_material();
+        let mut pst = 0;
+        let mut castling = 0;
 
         for color in [Color::White, Color::Black] {
             let sign = if color == Color::White { 1 } else { -1 };
 
-            score += sign * self.evaluate_piece_positions(color, Piece::Pawn, &PAWN_PST);
-            score += sign * self.evaluate_piece_positions(color, Piece::Knight, &KNIGHT_PST);
-            score += sign * self.evaluate_piece_positions(color, Piece::Bishop, &BISHOP_PST);
-            score += sign * self.evaluate_piece_positions(color, Piece::King, &KING_PST);
+            pst += sign * self.evaluate_piece_positions(color, Piece::Pawn, &PAWN_PST);
+            pst += sign * self.evaluate_piece_positions(color, Piece::Knight, &KNIGHT_PST);
+            pst += sign * self.evaluate_piece_positions(color, Piece::Bishop, &BISHOP_PST);
+            pst += sign * self.evaluate_piece_positions(color, Piece::King, &KING_PST);
 
             if self.piece_on(castled_kingside_square(color)) == Some((color, Piece::King)) {
-                score += sign * 35;
+                castling += sign * 35;
             }
 
             if self.piece_on(castled_queenside_square(color)) == Some((color, Piece::King)) {
-                score += sign * 20;
+                castling += sign * 20;
             }
         }
 
-        score
+        EvalBreakdown {
+            material,
+            pst,
+            castling,
+            total: material + pst + castling,
+        }
     }
 
     pub fn pretty_print(&self) {

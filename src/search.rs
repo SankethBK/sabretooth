@@ -4,8 +4,31 @@ use crate::types::{Color, Move};
 pub const DEFAULT_SEARCH_DEPTH: u32 = 6;
 const MATE_SCORE: i32 = 1_000_000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchResult {
+    pub best_move: Option<Move>,
+    pub score: i32,
+}
+
 pub fn find_best_move(board: &mut Board, depth: u32) -> Option<Move> {
+    search(board, depth).best_move
+}
+
+pub fn search(board: &mut Board, depth: u32) -> SearchResult {
     let legal_moves = board.generate_legal_moves();
+
+    if legal_moves.is_empty() {
+        let score = if board.is_in_check(board.side_to_move()) {
+            -MATE_SCORE
+        } else {
+            0
+        };
+        return SearchResult {
+            best_move: None,
+            score,
+        };
+    }
+
     let mut best_move = None;
     let mut best_score = i32::MIN;
     let mut alpha = i32::MIN + 1;
@@ -24,7 +47,10 @@ pub fn find_best_move(board: &mut Board, depth: u32) -> Option<Move> {
         alpha = alpha.max(score);
     }
 
-    best_move
+    SearchResult {
+        best_move,
+        score: best_score,
+    }
 }
 
 pub fn parse_go_depth(command: &str) -> Option<u32> {
@@ -92,6 +118,16 @@ mod tests {
         let best = find_best_move(&mut board, 2).expect("expected at least one legal move");
 
         assert_eq!(move_to_uci(best), "f7g7");
+    }
+
+    #[test]
+    fn tactical_position_avoids_knight_blunder() {
+        let mut board =
+            Board::from_fen("2k4r/pp2pQ2/2qp2p1/2p5/4P2r/P2P3N/1PP2P2/R3R1K1 w - - 0 24")
+                .unwrap();
+        let best = find_best_move(&mut board, 2).expect("expected at least one legal move");
+
+        assert_eq!(move_to_uci(best), "f7e6");
     }
 
     #[test]
