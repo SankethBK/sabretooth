@@ -3,8 +3,9 @@ use std::io::{self, BufRead, Write};
 use crate::board::Board;
 use crate::search::{
     DEFAULT_SEARCH_DEPTH, SearchResult, approximate_principal_variation, parse_go_depth, search,
+    search_root_move_lines,
 };
-use crate::types::{Color, Move, MoveKind, Piece, Square};
+use crate::types::{Move, MoveKind, Piece, Square};
 
 pub struct Engine {
     board: Board,
@@ -52,8 +53,17 @@ impl Engine {
             "eval" => {
                 self.handle_eval(out)?;
             }
+            "board" | "d" => {
+                self.handle_board(out)?;
+            }
             "lasteval" => {
                 self.handle_last_eval(out)?;
+            }
+            _ if trimmed.starts_with("move ") => {
+                self.handle_move(trimmed)?;
+            }
+            _ if trimmed.starts_with("rootmoves") => {
+                self.handle_rootmoves(trimmed, out)?;
             }
             _ if trimmed.starts_with("pv") => {
                 self.handle_pv(trimmed, out)?;
@@ -121,6 +131,28 @@ impl Engine {
         Ok(())
     }
 
+    fn handle_move(&mut self, command: &str) -> io::Result<()> {
+        let uci = command
+            .strip_prefix("move ")
+            .expect("move prefix already checked")
+            .trim();
+
+        if uci.is_empty() {
+            return Ok(());
+        }
+
+        let mv = parse_uci_move(&mut self.board, uci).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("illegal or invalid move: {uci}"),
+            )
+        })?;
+
+        self.board.make_move(mv);
+        self.last_search = None;
+        Ok(())
+    }
+
     fn handle_go<W: Write>(&mut self, command: &str, out: &mut W) -> io::Result<()> {
         let depth = parse_go_depth(command).unwrap_or(DEFAULT_SEARCH_DEPTH);
         let result = search(&mut self.board, depth);
@@ -137,18 +169,17 @@ impl Engine {
 
     fn handle_eval<W: Write>(&self, out: &mut W) -> io::Result<()> {
         let eval = self.board.evaluate_breakdown();
-        let stm = match self.board.side_to_move() {
-            Color::White => eval.total,
-            Color::Black => -eval.total,
-        };
 
-        writeln!(out, "material {}", eval.material)?;
-        writeln!(out, "pst {}", eval.pst)?;
-        writeln!(out, "castling {}", eval.castling)?;
-        writeln!(out, "total {}", eval.total)?;
-        writeln!(out, "stm {}", stm)?;
+        writeln!(out, "material {:+}", eval.material)?;
+        writeln!(out, "pst {:+}", eval.pst)?;
+        writeln!(out, "castling {:+}", eval.castling)?;
+        writeln!(out, "total {:+}", eval.total)?;
 
         Ok(())
+    }
+
+    fn handle_board<W: Write>(&self, out: &mut W) -> io::Result<()> {
+        write!(out, "{}", self.board.pretty_string())
     }
 
     fn handle_last_eval<W: Write>(&self, out: &mut W) -> io::Result<()> {
@@ -189,6 +220,46 @@ impl Engine {
         }
 
         writeln!(out, "pv {}", pv_text)?;
+        Ok(())
+    }
+
+    fn handle_rootmoves<W: Write>(&mut self, command: &str, out: &mut W) -> io::Result<()> {
+        let depth = parse_go_depth(command).unwrap_or(DEFAULT_SEARCH_DEPTH);
+        let scored_moves = search_root_move_lines(&mut self.board, depth);
+
+        if let Some(best) = scored_moves.first() {
+            self.last_search = Some((
+                depth,
+                SearchResult {
+                    best_move: Some(best.mv),
+                    score: best.score,
+                },
+            ));
+        } else {
+            self.last_search = Some((
+                depth,
+                SearchResult {
+                    best_move: None,
+                    score: if self.board.is_in_check(self.board.side_to_move()) {
+                        -1_000_000
+                    } else {
+                        0
+                    },
+                },
+            ));
+        }
+
+        writeln!(out, "depth {}", depth)?;
+        for scored in scored_moves {
+            let line = scored
+                .line
+                .iter()
+                .map(|mv| move_to_uci(*mv))
+                .collect::<Vec<_>>()
+                .join(" ");
+            writeln!(out, "{} score {} pv {}", move_to_uci(scored.mv), scored.score, line)?;
+        }
+
         Ok(())
     }
 }
@@ -232,6 +303,7 @@ fn promotion_suffix(piece: Piece) -> char {
 mod tests {
     use super::*;
     use crate::board::Board;
+    use crate::types::Color;
 
     #[test]
     fn move_to_uci_formats_quiet_and_promotion_moves() {
@@ -280,11 +352,27 @@ mod tests {
         engine.handle_eval(&mut output).unwrap();
 
         let text = String::from_utf8(output).unwrap();
-        assert!(text.contains("material 0"));
-        assert!(text.contains("pst 0"));
-        assert!(text.contains("castling 0"));
-        assert!(text.contains("total 0"));
-        assert!(text.contains("stm 0"));
+        assert!(text.contains("material +0"));
+        assert!(text.contains("pst +0"));
+        assert!(text.contains("castling +0"));
+        assert!(text.contains("total +0"));
+    }
+
+    #[test]
+    fn board_command_prints_position() {
+        let engine = Engine {
+            board: Board::starting_position(),
+            last_search: None,
+        };
+        let mut output = Vec::new();
+
+        engine.handle_board(&mut output).unwrap();
+
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("a b c d e f g h"));
+        assert!(text.contains("Side to move: White"));
+        assert!(text.contains("♔"));
+        assert!(text.contains("♚"));
     }
 
     #[test]
@@ -314,6 +402,22 @@ mod tests {
     }
 
     #[test]
+    fn move_command_applies_legal_move() {
+        let mut engine = Engine {
+            board: Board::starting_position(),
+            last_search: None,
+        };
+
+        engine.handle_move("move e2e4").unwrap();
+
+        assert_eq!(
+            engine.board.piece_on(Square::from_rf(3, 4)),
+            Some((Color::White, Piece::Pawn))
+        );
+        assert_eq!(engine.board.side_to_move(), Color::Black);
+    }
+
+    #[test]
     fn pv_command_prints_line() {
         let mut engine = Engine {
             board: Board::starting_position(),
@@ -327,5 +431,21 @@ mod tests {
         assert!(text.contains("depth 2"));
         assert!(text.contains("bestmove"));
         assert!(text.contains("pv "));
+    }
+
+    #[test]
+    fn rootmoves_command_prints_scored_moves() {
+        let mut engine = Engine {
+            board: Board::starting_position(),
+            last_search: None,
+        };
+        let mut output = Vec::new();
+
+        engine.handle_rootmoves("rootmoves depth 1", &mut output).unwrap();
+
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("depth 1"));
+        assert!(text.contains(" score "));
+        assert!(text.contains(" pv "));
     }
 }

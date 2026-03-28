@@ -340,10 +340,11 @@ impl Board {
         }
     }
 
-    pub fn pretty_print(&self) {
-        println!();
+    pub fn pretty_string(&self) -> String {
+        let mut out = String::new();
+        out.push('\n');
         for rank in (0..8).rev() {
-            print!("  {} ", rank + 1);
+            out.push_str(&format!("  {} ", rank + 1));
             for file in 0..8 {
                 let sq = Square::from_rf(rank, file);
                 // checkerboard background using spaces
@@ -369,18 +370,22 @@ impl Board {
                         }
                     }
                 };
-                print!("{} ", symbol);
+                out.push_str(symbol);
+                out.push(' ');
             }
-            println!();
+            out.push('\n');
         }
-        println!("    a b c d e f g h");
-        println!();
-        println!("  Side to move: {:?}", self.side_to_move);
-        println!("  Castling:     {:04b}", self.castling_rights);
-        println!("  En passant:   {:?}", self.en_passant);
-        println!("  Halfmove:     {}", self.halfmove_clock);
-        println!("  Fullmove:     {}", self.fullmove_number);
-        println!();
+        out.push_str("    a b c d e f g h\n\n");
+        out.push_str(&format!("  Side to move: {:?}\n", self.side_to_move));
+        out.push_str(&format!("  Castling:     {:04b}\n", self.castling_rights));
+        out.push_str(&format!("  En passant:   {:?}\n", self.en_passant));
+        out.push_str(&format!("  Halfmove:     {}\n", self.halfmove_clock));
+        out.push_str(&format!("  Fullmove:     {}\n\n", self.fullmove_number));
+        out
+    }
+
+    pub fn pretty_print(&self) {
+        print!("{}", self.pretty_string());
     }
 
     pub(crate) fn make_move(&mut self, mv: Move) {
