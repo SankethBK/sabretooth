@@ -53,6 +53,28 @@ pub fn search(board: &mut Board, depth: u32) -> SearchResult {
     }
 }
 
+pub fn approximate_principal_variation(board: &Board, depth: u32) -> (SearchResult, Vec<Move>) {
+    let mut board = board.clone();
+    let root = search(&mut board, depth);
+    let mut pv = Vec::new();
+
+    if root.best_move.is_none() {
+        return (root, pv);
+    }
+
+    for remaining_depth in (1..=depth).rev() {
+        let result = search(&mut board, remaining_depth);
+        let Some(best_move) = result.best_move else {
+            break;
+        };
+
+        pv.push(best_move);
+        board.make_move(best_move);
+    }
+
+    (root, pv)
+}
+
 pub fn parse_go_depth(command: &str) -> Option<u32> {
     let tokens: Vec<&str> = command.split_whitespace().collect();
     let depth_idx = tokens.iter().position(|&token| token == "depth")?;
@@ -123,8 +145,7 @@ mod tests {
     #[test]
     fn tactical_position_avoids_knight_blunder() {
         let mut board =
-            Board::from_fen("2k4r/pp2pQ2/2qp2p1/2p5/4P2r/P2P3N/1PP2P2/R3R1K1 w - - 0 24")
-                .unwrap();
+            Board::from_fen("2k4r/pp2pQ2/2qp2p1/2p5/4P2r/P2P3N/1PP2P2/R3R1K1 w - - 0 24").unwrap();
         let best = find_best_move(&mut board, 2).expect("expected at least one legal move");
 
         assert_eq!(move_to_uci(best), "f7e6");
@@ -140,6 +161,14 @@ mod tests {
         assert_eq!(immediate_mate, -MATE_SCORE + 1);
         assert_eq!(slower_mate, -MATE_SCORE + 3);
         assert!(immediate_mate < slower_mate);
+    }
+
+    #[test]
+    fn principal_variation_starts_with_best_move() {
+        let board = Board::starting_position();
+        let (result, pv) = approximate_principal_variation(&board, 2);
+
+        assert_eq!(pv.first().copied(), result.best_move);
     }
 
     #[test]

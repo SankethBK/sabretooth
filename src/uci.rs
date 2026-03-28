@@ -1,7 +1,9 @@
 use std::io::{self, BufRead, Write};
 
 use crate::board::Board;
-use crate::search::{DEFAULT_SEARCH_DEPTH, SearchResult, parse_go_depth, search};
+use crate::search::{
+    DEFAULT_SEARCH_DEPTH, SearchResult, approximate_principal_variation, parse_go_depth, search,
+};
 use crate::types::{Color, Move, MoveKind, Piece, Square};
 
 pub struct Engine {
@@ -52,6 +54,9 @@ impl Engine {
             }
             "lasteval" => {
                 self.handle_last_eval(out)?;
+            }
+            _ if trimmed.starts_with("pv") => {
+                self.handle_pv(trimmed, out)?;
             }
             "quit" => return Ok(false),
             _ if trimmed.starts_with("position ") => {
@@ -161,6 +166,29 @@ impl Engine {
             writeln!(out, "bestmove 0000")?;
         }
 
+        Ok(())
+    }
+
+    fn handle_pv<W: Write>(&mut self, command: &str, out: &mut W) -> io::Result<()> {
+        let depth = parse_go_depth(command).unwrap_or(DEFAULT_SEARCH_DEPTH);
+        let (result, pv) = approximate_principal_variation(&self.board, depth);
+        self.last_search = Some((depth, result));
+        let pv_text = pv
+            .into_iter()
+            .map(move_to_uci)
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        writeln!(out, "depth {}", depth)?;
+        writeln!(out, "search_score {}", result.score)?;
+
+        if let Some(bestmove) = result.best_move {
+            writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
+        } else {
+            writeln!(out, "bestmove 0000")?;
+        }
+
+        writeln!(out, "pv {}", pv_text)?;
         Ok(())
     }
 }
@@ -283,5 +311,21 @@ mod tests {
         assert!(text.contains("depth 4"));
         assert!(text.contains("search_score 123"));
         assert!(text.contains("bestmove e2e4"));
+    }
+
+    #[test]
+    fn pv_command_prints_line() {
+        let mut engine = Engine {
+            board: Board::starting_position(),
+            last_search: None,
+        };
+        let mut output = Vec::new();
+
+        engine.handle_pv("pv depth 2", &mut output).unwrap();
+
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("depth 2"));
+        assert!(text.contains("bestmove"));
+        assert!(text.contains("pv "));
     }
 }
