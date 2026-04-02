@@ -233,6 +233,7 @@ fn side_to_move_eval(board: &Board) -> i32 {
 mod tests {
     use super::*;
     use crate::board::Board;
+    use crate::testsuite::bk_depth_report;
     use crate::uci::move_to_uci;
 
     #[test]
@@ -306,5 +307,17 @@ mod tests {
     fn parse_go_depth_reads_requested_depth() {
         assert_eq!(parse_go_depth("go depth 2"), Some(2));
         assert_eq!(parse_go_depth("go movetime 100"), None);
+    }
+
+    #[test]
+    #[ignore = "benchmark harness for measuring current tactical strength"]
+    fn bk_suite_depth_4_report() {
+        let (solved, misses) = bk_depth_report(4);
+
+        for miss in misses {
+            println!("{miss}");
+        }
+
+        println!("Solved {solved}/24 BK positions at depth 4");
     }
 }

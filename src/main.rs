@@ -6,6 +6,8 @@ mod movegen;
 mod search;
 mod types;
 mod uci;
+#[cfg(test)]
+mod testsuite;
 
 fn main() {
     let mut engine = uci::Engine::new();
