@@ -1,5 +1,6 @@
 use std::io::{self, BufRead, Write};
 
+use crate::book::next_book_move;
 use crate::board::Board;
 use crate::search::{
     DEFAULT_SEARCH_DEPTH, SearchResult, approximate_principal_variation, parse_go_depth, search,
@@ -10,6 +11,8 @@ use crate::types::{Move, MoveKind, Piece, Square};
 pub struct Engine {
     board: Board,
     last_search: Option<(u32, SearchResult)>,
+    played_moves: Vec<String>,
+    book_history_valid: bool,
 }
 
 impl Engine {
@@ -17,6 +20,8 @@ impl Engine {
         Self {
             board: Board::starting_position(),
             last_search: None,
+            played_moves: Vec::new(),
+            book_history_valid: true,
         }
     }
 
@@ -49,6 +54,8 @@ impl Engine {
             "ucinewgame" => {
                 self.board = Board::starting_position();
                 self.last_search = None;
+                self.played_moves.clear();
+                self.book_history_valid = true;
             }
             "eval" => {
                 self.handle_eval(out)?;
@@ -95,15 +102,21 @@ impl Engine {
 
         let mut moves_start = tokens.len();
 
+        let mut book_history_valid = false;
+        let mut played_moves = Vec::new();
+
         let mut board = if tokens[0] == "startpos" {
             if let Some(idx) = tokens.iter().position(|&token| token == "moves") {
                 moves_start = idx + 1;
             }
+            book_history_valid = true;
             Board::starting_position()
         } else if tokens[0] == "fen" {
             let Some(moves_idx) = tokens.iter().position(|&token| token == "moves") else {
                 let fen = tokens[1..].join(" ");
                 self.board = Board::from_fen(&fen).map_err(invalid_input)?;
+                self.book_history_valid = false;
+                self.played_moves.clear();
                 return Ok(());
             };
 
@@ -123,11 +136,14 @@ impl Engine {
                     )
                 })?;
                 board.make_move(mv);
+                played_moves.push((*mv_str).to_string());
             }
         }
 
         self.board = board;
         self.last_search = None;
+        self.played_moves = played_moves;
+        self.book_history_valid = book_history_valid;
         Ok(())
     }
 
@@ -150,11 +166,23 @@ impl Engine {
 
         self.board.make_move(mv);
         self.last_search = None;
+        self.played_moves.push(uci.to_string());
         Ok(())
     }
 
     fn handle_go<W: Write>(&mut self, command: &str, out: &mut W) -> io::Result<()> {
         let depth = parse_go_depth(command).unwrap_or(DEFAULT_SEARCH_DEPTH);
+
+        if self.book_history_valid {
+            if let Some(book_move) = next_book_move(&self.played_moves) {
+                if let Some(bestmove) = parse_uci_move(&mut self.board, &book_move) {
+                    self.last_search = None;
+                    writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
+                    return Ok(());
+                }
+            }
+        }
+
         let result = search(&mut self.board, depth);
         self.last_search = Some((depth, result));
 
@@ -346,6 +374,8 @@ mod tests {
         let engine = Engine {
             board: Board::starting_position(),
             last_search: None,
+            played_moves: Vec::new(),
+            book_history_valid: true,
         };
         let mut output = Vec::new();
 
@@ -363,6 +393,8 @@ mod tests {
         let engine = Engine {
             board: Board::starting_position(),
             last_search: None,
+            played_moves: Vec::new(),
+            book_history_valid: true,
         };
         let mut output = Vec::new();
 
@@ -390,6 +422,8 @@ mod tests {
                     score: 123,
                 },
             )),
+            played_moves: Vec::new(),
+            book_history_valid: true,
         };
         let mut output = Vec::new();
 
@@ -406,6 +440,8 @@ mod tests {
         let mut engine = Engine {
             board: Board::starting_position(),
             last_search: None,
+            played_moves: Vec::new(),
+            book_history_valid: true,
         };
 
         engine.handle_move("move e2e4").unwrap();
@@ -422,6 +458,8 @@ mod tests {
         let mut engine = Engine {
             board: Board::starting_position(),
             last_search: None,
+            played_moves: Vec::new(),
+            book_history_valid: true,
         };
         let mut output = Vec::new();
 
@@ -438,6 +476,8 @@ mod tests {
         let mut engine = Engine {
             board: Board::starting_position(),
             last_search: None,
+            played_moves: Vec::new(),
+            book_history_valid: true,
         };
         let mut output = Vec::new();
 

@@ -1,5 +1,6 @@
 mod attacks;
 mod bitboard;
+mod book;
 mod board;
 mod movegen;
 mod search;
