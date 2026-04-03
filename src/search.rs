@@ -52,14 +52,7 @@ pub fn search(board: &mut Board, depth: u32) -> SearchResult {
 
     for mv in legal_moves {
         board.make_move(mv);
-        let score = -negamax(
-            board,
-            depth.saturating_sub(1),
-            -beta,
-            -alpha,
-            1,
-            &mut nodes,
-        );
+        let score = -negamax(board, depth.saturating_sub(1), -beta, -alpha, 1, &mut nodes);
         board.unmake_move();
 
         if score > best_score {
@@ -229,13 +222,8 @@ fn negamax_line(
 
     for mv in legal_moves {
         board.make_move(mv);
-        let (child_score, child_line) = negamax_line(
-            board,
-            depth.saturating_sub(1),
-            -beta,
-            -alpha,
-            ply + 1,
-        );
+        let (child_score, child_line) =
+            negamax_line(board, depth.saturating_sub(1), -beta, -alpha, ply + 1);
         board.unmake_move();
 
         let score = -child_score;
@@ -364,6 +352,18 @@ mod tests {
     #[ignore = "benchmark harness for measuring current tactical strength"]
     fn bk_suite_depth_4_report() {
         let (solved, misses) = bk_depth_report(4);
+
+        for miss in misses {
+            println!("{miss}");
+        }
+
+        println!("Solved {solved}/24 BK positions at depth 4");
+    }
+
+    #[test]
+    #[ignore = "benchmark harness for measuring current tactical strength"]
+    fn bk_suite_depth_5_report() {
+        let (solved, misses) = bk_depth_report(5);
 
         for miss in misses {
             println!("{miss}");
