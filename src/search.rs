@@ -142,24 +142,21 @@ pub fn parse_go_depth(command: &str) -> Option<u32> {
 }
 
 fn negamax(board: &mut Board, depth: u32, mut alpha: i32, beta: i32, ply: u32) -> i32 {
-    if depth == 0 {
+    let in_check = board.is_in_check(board.side_to_move());
+    if depth == 0 && !in_check {
         return side_to_move_eval(board);
     }
 
     let legal_moves = board.generate_legal_moves();
     if legal_moves.is_empty() {
-        return if board.is_in_check(board.side_to_move()) {
-            -MATE_SCORE + ply as i32
-        } else {
-            0
-        };
+        return terminal_score(in_check, ply);
     }
 
     let mut best_score = i32::MIN;
 
     for mv in legal_moves {
         board.make_move(mv);
-        let score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
+        let score = -negamax(board, depth.saturating_sub(1), -beta, -alpha, ply + 1);
         board.unmake_move();
         best_score = best_score.max(score);
         alpha = alpha.max(score);
@@ -182,18 +179,14 @@ fn negamax_line(
     beta: i32,
     ply: u32,
 ) -> (i32, Vec<Move>) {
-    if depth == 0 {
+    let in_check = board.is_in_check(board.side_to_move());
+    if depth == 0 && !in_check {
         return (side_to_move_eval(board), Vec::new());
     }
 
     let legal_moves = board.generate_legal_moves();
     if legal_moves.is_empty() {
-        let score = if board.is_in_check(board.side_to_move()) {
-            -MATE_SCORE + ply as i32
-        } else {
-            0
-        };
-        return (score, Vec::new());
+        return (terminal_score(in_check, ply), Vec::new());
     }
 
     let mut best_score = i32::MIN;
@@ -201,7 +194,8 @@ fn negamax_line(
 
     for mv in legal_moves {
         board.make_move(mv);
-        let (child_score, child_line) = negamax_line(board, depth - 1, -beta, -alpha, ply + 1);
+        let (child_score, child_line) =
+            negamax_line(board, depth.saturating_sub(1), -beta, -alpha, ply + 1);
         board.unmake_move();
 
         let score = -child_score;
@@ -219,6 +213,14 @@ fn negamax_line(
     }
 
     (best_score, best_line)
+}
+
+fn terminal_score(in_check: bool, ply: u32) -> i32 {
+    if in_check {
+        -MATE_SCORE + ply as i32
+    } else {
+        0
+    }
 }
 
 fn side_to_move_eval(board: &Board) -> i32 {
