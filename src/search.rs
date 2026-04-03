@@ -322,4 +322,16 @@ mod tests {
 
         println!("Solved {solved}/24 BK positions at depth 4");
     }
+
+    #[test]
+    #[ignore = "benchmark harness for measuring current tactical strength"]
+    fn bk_suite_depth_5_report() {
+        let (solved, misses) = bk_depth_report(5);
+
+        for miss in misses {
+            println!("{miss}");
+        }
+
+        println!("Solved {solved}/24 BK positions at depth 4");
+    }
 }
