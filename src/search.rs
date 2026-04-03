@@ -1,8 +1,12 @@
+use std::time::{Duration, Instant};
+
 use crate::board::Board;
 use crate::types::{Color, Move};
 
 pub const DEFAULT_SEARCH_DEPTH: u32 = 6;
+pub const MAX_TIMED_SEARCH_DEPTH: u32 = 64;
 const MATE_SCORE: i32 = 1_000_000;
+const DEADLINE_CHECK_INTERVAL: u64 = 2048;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchResult {
@@ -30,29 +34,56 @@ pub fn find_best_move(board: &mut Board, depth: u32) -> Option<Move> {
 }
 
 pub fn search(board: &mut Board, depth: u32) -> SearchResult {
+    search_with_deadline(board, depth, None)
+}
+
+pub fn search_for_duration(board: &mut Board, depth: u32, move_time: Duration) -> SearchResult {
+    search_with_deadline(board, depth, Some(Instant::now() + move_time))
+}
+
+fn search_with_deadline(board: &mut Board, depth: u32, deadline: Option<Instant>) -> SearchResult {
     if depth == 0 {
-        return search_with_pv_hint(board, 0, &[]);
+        return search_with_pv_hint(board, 0, &[], deadline).0;
     }
 
-    let mut result = search_with_pv_hint(board, 1, &[]);
+    let (mut result, mut completed) = search_with_pv_hint(board, 1, &[], deadline);
+    if !completed {
+        return result;
+    }
+
     let mut pv_hint = result.pv.clone();
     let mut nodes = result.nodes;
 
     for current_depth in 2..=depth {
-        result = search_with_pv_hint(board, current_depth, &pv_hint);
+        let (current_result, current_completed) =
+            search_with_pv_hint(board, current_depth, &pv_hint, deadline);
+        nodes += current_result.nodes;
+
+        if !current_completed {
+            break;
+        }
+
+        result = current_result;
         pv_hint = result.pv.clone();
-        nodes += result.nodes;
+        completed = current_completed;
     }
 
     result.nodes = nodes;
+    let _ = completed;
     result
 }
 
-pub fn search_with_pv_hint(board: &mut Board, depth: u32, pv_hint: &[Move]) -> SearchResult {
+pub fn search_with_pv_hint(
+    board: &mut Board,
+    depth: u32,
+    pv_hint: &[Move],
+    deadline: Option<Instant>,
+) -> (SearchResult, bool) {
     let mut nodes = 1;
     let mut pv = PrincipalVariation::new();
     let mut legal_moves = board.generate_legal_moves();
     order_moves_by_hint(&mut legal_moves, pv_hint.first().copied());
+    let mut timed_out = false;
 
     if legal_moves.is_empty() {
         let score = if board.is_in_check(board.side_to_move()) {
@@ -60,12 +91,15 @@ pub fn search_with_pv_hint(board: &mut Board, depth: u32, pv_hint: &[Move]) -> S
         } else {
             0
         };
-        return SearchResult {
-            best_move: None,
-            score,
-            nodes,
-            pv: Vec::new(),
-        };
+        return (
+            SearchResult {
+                best_move: None,
+                score,
+                nodes,
+                pv: Vec::new(),
+            },
+            true,
+        );
     }
 
     let mut best_move = None;
@@ -84,8 +118,14 @@ pub fn search_with_pv_hint(board: &mut Board, depth: u32, pv_hint: &[Move]) -> S
             &mut nodes,
             &mut pv,
             pv_hint,
+            deadline,
+            &mut timed_out,
         );
         board.unmake_move();
+
+        if timed_out {
+            break;
+        }
 
         if score > best_score {
             best_score = score;
@@ -96,12 +136,14 @@ pub fn search_with_pv_hint(board: &mut Board, depth: u32, pv_hint: &[Move]) -> S
         alpha = alpha.max(score);
     }
 
-    SearchResult {
+    let result = SearchResult {
         best_move,
         score: best_score,
         nodes,
         pv: pv.line_at(0).to_vec(),
-    }
+    };
+
+    (result, !timed_out)
 }
 
 pub fn search_root_moves(board: &mut Board, depth: u32) -> Vec<RootMoveScore> {
@@ -121,6 +163,8 @@ pub fn search_root_moves(board: &mut Board, depth: u32) -> Vec<RootMoveScore> {
             &mut nodes,
             &mut pv,
             &[],
+            None,
+            &mut false,
         );
         board.unmake_move();
         scored_moves.push(RootMoveScore { mv, score });
@@ -152,9 +196,10 @@ pub fn search_root_move_lines(board: &mut Board, depth: u32) -> Vec<RootMoveLine
             &mut nodes,
             &mut pv,
             &[],
+            None,
+            &mut false,
         );
-        let (child_score, child_line) =
-            (child_score, pv.line_at(1).to_vec());
+        let (child_score, child_line) = (child_score, pv.line_at(1).to_vec());
         board.unmake_move();
         let score = -child_score;
 
@@ -189,8 +234,14 @@ fn negamax(
     nodes: &mut u64,
     pv: &mut PrincipalVariation,
     pv_hint: &[Move],
+    deadline: Option<Instant>,
+    timed_out: &mut bool,
 ) -> i32 {
     *nodes += 1;
+    if should_stop(*nodes, deadline) {
+        *timed_out = true;
+        return 0;
+    }
 
     let in_check = board.is_in_check(board.side_to_move());
     if depth == 0 && !in_check {
@@ -218,8 +269,14 @@ fn negamax(
             nodes,
             pv,
             pv_hint,
+            deadline,
+            timed_out,
         );
         board.unmake_move();
+
+        if *timed_out {
+            return 0;
+        }
 
         if score > best_score {
             best_score = score;
@@ -234,6 +291,11 @@ fn negamax(
     }
 
     best_score
+}
+
+fn should_stop(nodes: u64, deadline: Option<Instant>) -> bool {
+    nodes % DEADLINE_CHECK_INTERVAL == 0
+        && deadline.is_some_and(|deadline| Instant::now() >= deadline)
 }
 
 fn order_moves_by_hint(moves: &mut [Move], hint: Option<Move>) {
@@ -344,6 +406,8 @@ mod tests {
             &mut nodes,
             &mut PrincipalVariation::new(),
             &[],
+            None,
+            &mut false,
         );
         let slower_mate = negamax(
             &mut board,
@@ -354,6 +418,8 @@ mod tests {
             &mut nodes,
             &mut PrincipalVariation::new(),
             &[],
+            None,
+            &mut false,
         );
 
         assert_eq!(immediate_mate, -MATE_SCORE + 1);
@@ -408,9 +474,21 @@ mod tests {
     #[test]
     fn order_moves_by_hint_moves_pv_move_to_front() {
         let mut moves = vec![
-            Move::new(Square::from_rf(1, 3), Square::from_rf(3, 3), MoveKind::DoublePawnPush),
-            Move::new(Square::from_rf(1, 4), Square::from_rf(3, 4), MoveKind::DoublePawnPush),
-            Move::new(Square::from_rf(0, 6), Square::from_rf(2, 5), MoveKind::Quiet),
+            Move::new(
+                Square::from_rf(1, 3),
+                Square::from_rf(3, 3),
+                MoveKind::DoublePawnPush,
+            ),
+            Move::new(
+                Square::from_rf(1, 4),
+                Square::from_rf(3, 4),
+                MoveKind::DoublePawnPush,
+            ),
+            Move::new(
+                Square::from_rf(0, 6),
+                Square::from_rf(2, 5),
+                MoveKind::Quiet,
+            ),
         ];
         let hint = moves[1];
 

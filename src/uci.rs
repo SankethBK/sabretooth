@@ -1,11 +1,16 @@
 use std::io::{self, BufRead, Write};
+use std::time::Duration;
 
 use crate::book::next_book_move;
 use crate::board::Board;
 use crate::search::{
-    DEFAULT_SEARCH_DEPTH, SearchResult, parse_go_depth, search, search_root_move_lines,
+    DEFAULT_SEARCH_DEPTH, MAX_TIMED_SEARCH_DEPTH, SearchResult, parse_go_depth, search,
+    search_for_duration, search_root_move_lines,
 };
-use crate::types::{Move, MoveKind, Piece, Square};
+use crate::types::{Color, Move, MoveKind, Piece, Square};
+
+const DEFAULT_MOVES_TO_GO: u64 = 30;
+const MOVE_OVERHEAD_MS: u64 = 10;
 
 pub struct Engine {
     board: Board,
@@ -170,7 +175,7 @@ impl Engine {
     }
 
     fn handle_go<W: Write>(&mut self, command: &str, out: &mut W) -> io::Result<()> {
-        let depth = parse_go_depth(command).unwrap_or(DEFAULT_SEARCH_DEPTH);
+        let go = parse_go_command(command, self.board.side_to_move());
 
         if self.book_history_valid {
             if let Some(book_move) = next_book_move(&self.played_moves) {
@@ -182,7 +187,11 @@ impl Engine {
             }
         }
 
-        let result = search(&mut self.board, depth);
+        let result = if let Some(move_time) = go.move_time {
+            search_for_duration(&mut self.board, go.depth, move_time)
+        } else {
+            search(&mut self.board, go.depth)
+        };
 
         if let Some(bestmove) = result.best_move {
             writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
@@ -190,7 +199,7 @@ impl Engine {
             writeln!(out, "bestmove 0000")?;
         }
 
-        self.last_search = Some((depth, result));
+        self.last_search = Some((go.depth, result));
         Ok(())
     }
 
@@ -297,6 +306,60 @@ impl Engine {
 
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GoCommand {
+    depth: u32,
+    move_time: Option<Duration>,
+}
+
+fn parse_go_command(command: &str, side_to_move: Color) -> GoCommand {
+    let depth = parse_go_depth(command).unwrap_or(DEFAULT_SEARCH_DEPTH);
+    let movetime_ms = parse_go_u64(command, "movetime");
+    let white_time_ms = parse_go_u64(command, "wtime");
+    let black_time_ms = parse_go_u64(command, "btime");
+    let white_increment_ms = parse_go_u64(command, "winc").unwrap_or(0);
+    let black_increment_ms = parse_go_u64(command, "binc").unwrap_or(0);
+    let moves_to_go = parse_go_u64(command, "movestogo").unwrap_or(DEFAULT_MOVES_TO_GO).max(1);
+
+    if let Some(movetime_ms) = movetime_ms {
+        return GoCommand {
+            depth: if parse_go_depth(command).is_some() {
+                depth
+            } else {
+                MAX_TIMED_SEARCH_DEPTH
+            },
+            move_time: Some(Duration::from_millis(
+                movetime_ms.saturating_sub(MOVE_OVERHEAD_MS).max(1),
+            )),
+        };
+    }
+
+    let (time_ms, increment_ms) = match side_to_move {
+        Color::White => (white_time_ms, white_increment_ms),
+        Color::Black => (black_time_ms, black_increment_ms),
+    };
+
+    let move_time = time_ms.map(|time_ms| {
+        let budget_ms = time_ms / moves_to_go + increment_ms / 2;
+        Duration::from_millis(budget_ms.saturating_sub(MOVE_OVERHEAD_MS).max(1))
+    });
+
+    GoCommand {
+        depth: if move_time.is_some() && parse_go_depth(command).is_none() {
+            MAX_TIMED_SEARCH_DEPTH
+        } else {
+            depth
+        },
+        move_time,
+    }
+}
+
+fn parse_go_u64(command: &str, key: &str) -> Option<u64> {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    let idx = tokens.iter().position(|&token| token == key)?;
+    tokens.get(idx + 1)?.parse::<u64>().ok()
 }
 
 fn invalid_input(err: impl std::fmt::Debug) -> io::Error {
@@ -501,5 +564,32 @@ mod tests {
         assert!(text.contains("depth 1"));
         assert!(text.contains(" score "));
         assert!(text.contains(" pv "));
+    }
+
+    #[test]
+    fn parse_go_command_prefers_explicit_movetime() {
+        let go = parse_go_command("go wtime 30000 btime 30000 movetime 250", Color::White);
+
+        assert_eq!(go.depth, MAX_TIMED_SEARCH_DEPTH);
+        assert_eq!(go.move_time, Some(Duration::from_millis(240)));
+    }
+
+    #[test]
+    fn parse_go_command_allocates_time_from_clock_and_increment() {
+        let go = parse_go_command(
+            "go wtime 60000 btime 50000 winc 1000 binc 2000 movestogo 20",
+            Color::Black,
+        );
+
+        assert_eq!(go.depth, MAX_TIMED_SEARCH_DEPTH);
+        assert_eq!(go.move_time, Some(Duration::from_millis(3490)));
+    }
+
+    #[test]
+    fn parse_go_command_keeps_explicit_depth() {
+        let go = parse_go_command("go depth 5 wtime 60000 btime 50000", Color::White);
+
+        assert_eq!(go.depth, 5);
+        assert_eq!(go.move_time, Some(Duration::from_millis(1990)));
     }
 }
