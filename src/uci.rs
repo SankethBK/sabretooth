@@ -218,6 +218,7 @@ impl Engine {
 
         writeln!(out, "depth {}", depth)?;
         writeln!(out, "search_score {}", result.score)?;
+        writeln!(out, "nodes {}", result.nodes)?;
 
         if let Some(bestmove) = result.best_move {
             writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
@@ -240,6 +241,7 @@ impl Engine {
 
         writeln!(out, "depth {}", depth)?;
         writeln!(out, "search_score {}", result.score)?;
+        writeln!(out, "nodes {}", result.nodes)?;
 
         if let Some(bestmove) = result.best_move {
             writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
@@ -261,6 +263,7 @@ impl Engine {
                 SearchResult {
                     best_move: Some(best.mv),
                     score: best.score,
+                    nodes: 0,
                 },
             ));
         } else {
@@ -273,6 +276,7 @@ impl Engine {
                     } else {
                         0
                     },
+                    nodes: 0,
                 },
             ));
         }
@@ -420,6 +424,7 @@ mod tests {
                         MoveKind::DoublePawnPush,
                     )),
                     score: 123,
+                    nodes: 456,
                 },
             )),
             played_moves: Vec::new(),
@@ -432,6 +437,7 @@ mod tests {
         let text = String::from_utf8(output).unwrap();
         assert!(text.contains("depth 4"));
         assert!(text.contains("search_score 123"));
+        assert!(text.contains("nodes 456"));
         assert!(text.contains("bestmove e2e4"));
     }
 

@@ -8,6 +8,7 @@ const MATE_SCORE: i32 = 1_000_000;
 pub struct SearchResult {
     pub best_move: Option<Move>,
     pub score: i32,
+    pub nodes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +29,7 @@ pub fn find_best_move(board: &mut Board, depth: u32) -> Option<Move> {
 }
 
 pub fn search(board: &mut Board, depth: u32) -> SearchResult {
+    let mut nodes = 1;
     let legal_moves = board.generate_legal_moves();
 
     if legal_moves.is_empty() {
@@ -39,6 +41,7 @@ pub fn search(board: &mut Board, depth: u32) -> SearchResult {
         return SearchResult {
             best_move: None,
             score,
+            nodes,
         };
     }
 
@@ -49,7 +52,14 @@ pub fn search(board: &mut Board, depth: u32) -> SearchResult {
 
     for mv in legal_moves {
         board.make_move(mv);
-        let score = -negamax(board, depth.saturating_sub(1), -beta, -alpha, 1);
+        let score = -negamax(
+            board,
+            depth.saturating_sub(1),
+            -beta,
+            -alpha,
+            1,
+            &mut nodes,
+        );
         board.unmake_move();
 
         if score > best_score {
@@ -63,6 +73,7 @@ pub fn search(board: &mut Board, depth: u32) -> SearchResult {
     SearchResult {
         best_move,
         score: best_score,
+        nodes,
     }
 }
 
@@ -94,7 +105,15 @@ pub fn search_root_moves(board: &mut Board, depth: u32) -> Vec<RootMoveScore> {
 
     for mv in legal_moves {
         board.make_move(mv);
-        let score = -negamax(board, depth.saturating_sub(1), i32::MIN + 1, i32::MAX, 1);
+        let mut nodes = 1;
+        let score = -negamax(
+            board,
+            depth.saturating_sub(1),
+            i32::MIN + 1,
+            i32::MAX,
+            1,
+            &mut nodes,
+        );
         board.unmake_move();
         scored_moves.push(RootMoveScore { mv, score });
     }
@@ -141,25 +160,38 @@ pub fn parse_go_depth(command: &str) -> Option<u32> {
     tokens.get(depth_idx + 1)?.parse::<u32>().ok()
 }
 
-fn negamax(board: &mut Board, depth: u32, mut alpha: i32, beta: i32, ply: u32) -> i32 {
-    if depth == 0 {
+fn negamax(
+    board: &mut Board,
+    depth: u32,
+    mut alpha: i32,
+    beta: i32,
+    ply: u32,
+    nodes: &mut u64,
+) -> i32 {
+    *nodes += 1;
+
+    let in_check = board.is_in_check(board.side_to_move());
+    if depth == 0 && !in_check {
         return side_to_move_eval(board);
     }
 
     let legal_moves = board.generate_legal_moves();
     if legal_moves.is_empty() {
-        return if board.is_in_check(board.side_to_move()) {
-            -MATE_SCORE + ply as i32
-        } else {
-            0
-        };
+        return terminal_score(in_check, ply);
     }
 
     let mut best_score = i32::MIN;
 
     for mv in legal_moves {
         board.make_move(mv);
-        let score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
+        let score = -negamax(
+            board,
+            depth.saturating_sub(1),
+            -beta,
+            -alpha,
+            ply + 1,
+            nodes,
+        );
         board.unmake_move();
         best_score = best_score.max(score);
         alpha = alpha.max(score);
@@ -182,18 +214,14 @@ fn negamax_line(
     beta: i32,
     ply: u32,
 ) -> (i32, Vec<Move>) {
-    if depth == 0 {
+    let in_check = board.is_in_check(board.side_to_move());
+    if depth == 0 && !in_check {
         return (side_to_move_eval(board), Vec::new());
     }
 
     let legal_moves = board.generate_legal_moves();
     if legal_moves.is_empty() {
-        let score = if board.is_in_check(board.side_to_move()) {
-            -MATE_SCORE + ply as i32
-        } else {
-            0
-        };
-        return (score, Vec::new());
+        return (terminal_score(in_check, ply), Vec::new());
     }
 
     let mut best_score = i32::MIN;
@@ -201,7 +229,13 @@ fn negamax_line(
 
     for mv in legal_moves {
         board.make_move(mv);
-        let (child_score, child_line) = negamax_line(board, depth - 1, -beta, -alpha, ply + 1);
+        let (child_score, child_line) = negamax_line(
+            board,
+            depth.saturating_sub(1),
+            -beta,
+            -alpha,
+            ply + 1,
+        );
         board.unmake_move();
 
         let score = -child_score;
@@ -219,6 +253,14 @@ fn negamax_line(
     }
 
     (best_score, best_line)
+}
+
+fn terminal_score(in_check: bool, ply: u32) -> i32 {
+    if in_check {
+        -MATE_SCORE + ply as i32
+    } else {
+        0
+    }
 }
 
 fn side_to_move_eval(board: &Board) -> i32 {
@@ -264,9 +306,10 @@ mod tests {
     #[test]
     fn checkmate_score_prefers_faster_mates() {
         let mut board = Board::from_fen("6k1/6Q1/6K1/8/8/8/8/8 b - - 0 1").unwrap();
+        let mut nodes = 1;
 
-        let immediate_mate = negamax(&mut board, 1, i32::MIN + 1, i32::MAX, 1);
-        let slower_mate = negamax(&mut board, 1, i32::MIN + 1, i32::MAX, 3);
+        let immediate_mate = negamax(&mut board, 1, i32::MIN + 1, i32::MAX, 1, &mut nodes);
+        let slower_mate = negamax(&mut board, 1, i32::MIN + 1, i32::MAX, 3, &mut nodes);
 
         assert_eq!(immediate_mate, -MATE_SCORE + 1);
         assert_eq!(slower_mate, -MATE_SCORE + 3);
@@ -307,6 +350,14 @@ mod tests {
     fn parse_go_depth_reads_requested_depth() {
         assert_eq!(parse_go_depth("go depth 2"), Some(2));
         assert_eq!(parse_go_depth("go movetime 100"), None);
+    }
+
+    #[test]
+    fn search_reports_visited_nodes() {
+        let mut board = Board::starting_position();
+        let result = search(&mut board, 2);
+
+        assert!(result.nodes > 1);
     }
 
     #[test]

@@ -11,6 +11,34 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 
+SEARCH_BENCHMARKS = {
+    "search/startpos_depth_4": {
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "depth": 4,
+    },
+    "search/bk01_depth_5": {
+        "fen": "1k1r4/pp1b1R2/3q2pp/4p3/2B5/4Q3/PPP2B2/2K5 b - - 0 1",
+        "depth": 5,
+    },
+    "search/bk05_depth_5": {
+        "fen": "r1b2rk1/2q1b1pp/p2ppn2/1p6/3QP3/1BN1B3/PPP3PP/R4RK1 w - - 0 1",
+        "depth": 5,
+    },
+    "search/bk11_depth_5": {
+        "fen": "2r1nrk1/p2q1ppp/bp1p4/n1pPp3/P1P1P3/2PBB1N1/4QPPP/R4RK1 w - - 0 1",
+        "depth": 5,
+    },
+    "search/bk14_depth_5": {
+        "fen": "rnb2r1k/pp2p2p/2pp2p1/q2P1p2/8/1Pb2NP1/PB2PPBP/R2Q1RK1 w - - 0 1",
+        "depth": 5,
+    },
+    "search/st01_depth_5": {
+        "fen": "2k4r/pp2pQ2/2qp2p1/2p5/4P2r/P2P3N/1PP2P2/R3R1K1 w - - 0 24",
+        "depth": 5,
+    },
+}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run Criterion and append benchmark results to a JSONL history file."
@@ -85,7 +113,9 @@ def collect_run_record(
         median = estimates["median"]
 
         benchmark_results.append(
-            {
+            enrich_benchmark_result(
+                repo_root,
+                {
                 "benchmark": benchmark_name,
                 "mean_ns": mean["point_estimate"],
                 "mean_ci_low_ns": mean["confidence_interval"]["lower_bound"],
@@ -93,7 +123,8 @@ def collect_run_record(
                 "median_ns": median["point_estimate"],
                 "median_ci_low_ns": median["confidence_interval"]["lower_bound"],
                 "median_ci_high_ns": median["confidence_interval"]["upper_bound"],
-            }
+                },
+            )
         )
 
     if not benchmark_results:
@@ -119,6 +150,73 @@ def append_run_record(path: Path, run_record: Dict[str, Any]) -> None:
     with path.open("a") as f:
         f.write(json.dumps(run_record, sort_keys=True))
         f.write("\n")
+
+
+def enrich_benchmark_result(
+    repo_root: Path,
+    benchmark_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    search_config = SEARCH_BENCHMARKS.get(benchmark_result["benchmark"])
+    if not search_config:
+        return benchmark_result
+
+    search_stats = probe_search_stats(
+        repo_root,
+        search_config["fen"],
+        search_config["depth"],
+    )
+    benchmark_result.update(search_stats)
+
+    mean_ns = benchmark_result["mean_ns"]
+    if mean_ns > 0:
+        benchmark_result["nps"] = int(
+            benchmark_result["nodes"] * 1_000_000_000 / mean_ns
+        )
+
+    return benchmark_result
+
+
+def probe_search_stats(
+    repo_root: Path,
+    fen: str,
+    depth: int,
+) -> Dict[str, Any]:
+    command = ["cargo", "run", "--release", "--quiet"]
+    uci_script = (
+        f"position fen {fen}\n"
+        f"go depth {depth}\n"
+        "lasteval\n"
+        "quit\n"
+    )
+
+    result = subprocess.run(
+        command,
+        cwd=repo_root,
+        input=uci_script,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    search_stats = {
+        "depth": depth,
+        "score": None,
+        "nodes": None,
+        "bestmove": "0000",
+    }
+
+    for line in result.stdout.splitlines():
+        if line.startswith("search_score "):
+            search_stats["score"] = int(line.split()[1])
+        elif line.startswith("nodes "):
+            search_stats["nodes"] = int(line.split()[1])
+        elif line.startswith("bestmove "):
+            search_stats["bestmove"] = line.split()[1]
+
+    if search_stats["score"] is None or search_stats["nodes"] is None:
+        raise RuntimeError(f"Failed to parse search stats from engine output:\n{result.stdout}")
+
+    return search_stats
 
 
 def git_output(repo_root: Path, command: List[str]) -> str:
