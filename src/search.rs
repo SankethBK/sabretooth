@@ -4,11 +4,12 @@ use crate::types::{Color, Move};
 pub const DEFAULT_SEARCH_DEPTH: u32 = 6;
 const MATE_SCORE: i32 = 1_000_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchResult {
     pub best_move: Option<Move>,
     pub score: i32,
     pub nodes: u64,
+    pub pv: Vec<Move>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +31,7 @@ pub fn find_best_move(board: &mut Board, depth: u32) -> Option<Move> {
 
 pub fn search(board: &mut Board, depth: u32) -> SearchResult {
     let mut nodes = 1;
+    let mut pv = PrincipalVariation::new();
     let legal_moves = board.generate_legal_moves();
 
     if legal_moves.is_empty() {
@@ -42,6 +44,7 @@ pub fn search(board: &mut Board, depth: u32) -> SearchResult {
             best_move: None,
             score,
             nodes,
+            pv: Vec::new(),
         };
     }
 
@@ -52,12 +55,21 @@ pub fn search(board: &mut Board, depth: u32) -> SearchResult {
 
     for mv in legal_moves {
         board.make_move(mv);
-        let score = -negamax(board, depth.saturating_sub(1), -beta, -alpha, 1, &mut nodes);
+        let score = -negamax(
+            board,
+            depth.saturating_sub(1),
+            -beta,
+            -alpha,
+            1,
+            &mut nodes,
+            &mut pv,
+        );
         board.unmake_move();
 
         if score > best_score {
             best_score = score;
             best_move = Some(mv);
+            pv.update_from_child(0, mv);
         }
 
         alpha = alpha.max(score);
@@ -67,29 +79,8 @@ pub fn search(board: &mut Board, depth: u32) -> SearchResult {
         best_move,
         score: best_score,
         nodes,
+        pv: pv.line_at(0).to_vec(),
     }
-}
-
-pub fn approximate_principal_variation(board: &Board, depth: u32) -> (SearchResult, Vec<Move>) {
-    let mut board = board.clone();
-    let root = search(&mut board, depth);
-    let mut pv = Vec::new();
-
-    if root.best_move.is_none() {
-        return (root, pv);
-    }
-
-    for remaining_depth in (1..=depth).rev() {
-        let result = search(&mut board, remaining_depth);
-        let Some(best_move) = result.best_move else {
-            break;
-        };
-
-        pv.push(best_move);
-        board.make_move(best_move);
-    }
-
-    (root, pv)
 }
 
 pub fn search_root_moves(board: &mut Board, depth: u32) -> Vec<RootMoveScore> {
@@ -99,6 +90,7 @@ pub fn search_root_moves(board: &mut Board, depth: u32) -> Vec<RootMoveScore> {
     for mv in legal_moves {
         board.make_move(mv);
         let mut nodes = 1;
+        let mut pv = PrincipalVariation::new();
         let score = -negamax(
             board,
             depth.saturating_sub(1),
@@ -106,6 +98,7 @@ pub fn search_root_moves(board: &mut Board, depth: u32) -> Vec<RootMoveScore> {
             i32::MAX,
             1,
             &mut nodes,
+            &mut pv,
         );
         board.unmake_move();
         scored_moves.push(RootMoveScore { mv, score });
@@ -126,8 +119,19 @@ pub fn search_root_move_lines(board: &mut Board, depth: u32) -> Vec<RootMoveLine
 
     for mv in legal_moves {
         board.make_move(mv);
+        let mut nodes = 1;
+        let mut pv = PrincipalVariation::new();
+        let child_score = negamax(
+            board,
+            depth.saturating_sub(1),
+            i32::MIN + 1,
+            i32::MAX,
+            1,
+            &mut nodes,
+            &mut pv,
+        );
         let (child_score, child_line) =
-            negamax_line(board, depth.saturating_sub(1), i32::MIN + 1, i32::MAX, 1);
+            (child_score, pv.line_at(1).to_vec());
         board.unmake_move();
         let score = -child_score;
 
@@ -160,16 +164,19 @@ fn negamax(
     beta: i32,
     ply: u32,
     nodes: &mut u64,
+    pv: &mut PrincipalVariation,
 ) -> i32 {
     *nodes += 1;
 
     let in_check = board.is_in_check(board.side_to_move());
     if depth == 0 && !in_check {
+        pv.clear_at(ply as usize);
         return side_to_move_eval(board);
     }
 
     let legal_moves = board.generate_legal_moves();
     if legal_moves.is_empty() {
+        pv.clear_at(ply as usize);
         return terminal_score(in_check, ply);
     }
 
@@ -184,9 +191,15 @@ fn negamax(
             -alpha,
             ply + 1,
             nodes,
+            pv,
         );
         board.unmake_move();
-        best_score = best_score.max(score);
+
+        if score > best_score {
+            best_score = score;
+            pv.update_from_child(ply as usize, mv);
+        }
+
         alpha = alpha.max(score);
 
         if alpha >= beta {
@@ -197,50 +210,39 @@ fn negamax(
     best_score
 }
 
-// Negamax that also returns the principal variation line for the given depth.
-// Currently not used for main search, but only as a utlity for debugging
-// This will be removed in future once PV is added to main search
-fn negamax_line(
-    board: &mut Board,
-    depth: u32,
-    mut alpha: i32,
-    beta: i32,
-    ply: u32,
-) -> (i32, Vec<Move>) {
-    let in_check = board.is_in_check(board.side_to_move());
-    if depth == 0 && !in_check {
-        return (side_to_move_eval(board), Vec::new());
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct PrincipalVariation {
+    lines: Vec<Vec<Move>>,
+}
+
+impl PrincipalVariation {
+    fn new() -> Self {
+        Self::default()
     }
 
-    let legal_moves = board.generate_legal_moves();
-    if legal_moves.is_empty() {
-        return (terminal_score(in_check, ply), Vec::new());
+    fn line_at(&self, ply: usize) -> &[Move] {
+        self.lines.get(ply).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    let mut best_score = i32::MIN;
-    let mut best_line = Vec::new();
+    fn clear_at(&mut self, ply: usize) {
+        self.ensure_ply(ply);
+        self.lines[ply].clear();
+    }
 
-    for mv in legal_moves {
-        board.make_move(mv);
-        let (child_score, child_line) =
-            negamax_line(board, depth.saturating_sub(1), -beta, -alpha, ply + 1);
-        board.unmake_move();
+    fn update_from_child(&mut self, ply: usize, mv: Move) {
+        self.ensure_ply(ply + 1);
+        let child_line = self.lines[ply + 1].clone();
 
-        let score = -child_score;
-        if score > best_score {
-            best_score = score;
-            best_line.clear();
-            best_line.push(mv);
-            best_line.extend(child_line);
-        }
+        self.lines[ply].clear();
+        self.lines[ply].push(mv);
+        self.lines[ply].extend(child_line);
+    }
 
-        alpha = alpha.max(score);
-        if alpha >= beta {
-            break;
+    fn ensure_ply(&mut self, ply: usize) {
+        if self.lines.len() <= ply {
+            self.lines.resize_with(ply + 1, Vec::new);
         }
     }
-
-    (best_score, best_line)
 }
 
 fn terminal_score(in_check: bool, ply: u32) -> i32 {
@@ -296,8 +298,24 @@ mod tests {
         let mut board = Board::from_fen("6k1/6Q1/6K1/8/8/8/8/8 b - - 0 1").unwrap();
         let mut nodes = 1;
 
-        let immediate_mate = negamax(&mut board, 1, i32::MIN + 1, i32::MAX, 1, &mut nodes);
-        let slower_mate = negamax(&mut board, 1, i32::MIN + 1, i32::MAX, 3, &mut nodes);
+        let immediate_mate = negamax(
+            &mut board,
+            1,
+            i32::MIN + 1,
+            i32::MAX,
+            1,
+            &mut nodes,
+            &mut PrincipalVariation::new(),
+        );
+        let slower_mate = negamax(
+            &mut board,
+            1,
+            i32::MIN + 1,
+            i32::MAX,
+            3,
+            &mut nodes,
+            &mut PrincipalVariation::new(),
+        );
 
         assert_eq!(immediate_mate, -MATE_SCORE + 1);
         assert_eq!(slower_mate, -MATE_SCORE + 3);
@@ -306,10 +324,10 @@ mod tests {
 
     #[test]
     fn principal_variation_starts_with_best_move() {
-        let board = Board::starting_position();
-        let (result, pv) = approximate_principal_variation(&board, 2);
+        let mut board = Board::starting_position();
+        let result = search(&mut board, 2);
 
-        assert_eq!(pv.first().copied(), result.best_move);
+        assert_eq!(result.pv.first().copied(), result.best_move);
     }
 
     #[test]

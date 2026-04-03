@@ -3,8 +3,7 @@ use std::io::{self, BufRead, Write};
 use crate::book::next_book_move;
 use crate::board::Board;
 use crate::search::{
-    DEFAULT_SEARCH_DEPTH, SearchResult, approximate_principal_variation, parse_go_depth, search,
-    search_root_move_lines,
+    DEFAULT_SEARCH_DEPTH, SearchResult, parse_go_depth, search, search_root_move_lines,
 };
 use crate::types::{Move, MoveKind, Piece, Square};
 
@@ -184,7 +183,6 @@ impl Engine {
         }
 
         let result = search(&mut self.board, depth);
-        self.last_search = Some((depth, result));
 
         if let Some(bestmove) = result.best_move {
             writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
@@ -192,6 +190,7 @@ impl Engine {
             writeln!(out, "bestmove 0000")?;
         }
 
+        self.last_search = Some((depth, result));
         Ok(())
     }
 
@@ -211,7 +210,7 @@ impl Engine {
     }
 
     fn handle_last_eval<W: Write>(&self, out: &mut W) -> io::Result<()> {
-        let Some((depth, result)) = self.last_search else {
+        let Some((depth, result)) = self.last_search.as_ref() else {
             writeln!(out, "no search has been run")?;
             return Ok(());
         };
@@ -231,10 +230,11 @@ impl Engine {
 
     fn handle_pv<W: Write>(&mut self, command: &str, out: &mut W) -> io::Result<()> {
         let depth = parse_go_depth(command).unwrap_or(DEFAULT_SEARCH_DEPTH);
-        let (result, pv) = approximate_principal_variation(&self.board, depth);
-        self.last_search = Some((depth, result));
-        let pv_text = pv
-            .into_iter()
+        let result = search(&mut self.board, depth);
+        let pv_text = result
+            .pv
+            .iter()
+            .copied()
             .map(move_to_uci)
             .collect::<Vec<_>>()
             .join(" ");
@@ -250,6 +250,7 @@ impl Engine {
         }
 
         writeln!(out, "pv {}", pv_text)?;
+        self.last_search = Some((depth, result));
         Ok(())
     }
 
@@ -264,6 +265,7 @@ impl Engine {
                     best_move: Some(best.mv),
                     score: best.score,
                     nodes: 0,
+                    pv: best.line.clone(),
                 },
             ));
         } else {
@@ -277,6 +279,7 @@ impl Engine {
                         0
                     },
                     nodes: 0,
+                    pv: Vec::new(),
                 },
             ));
         }
@@ -425,6 +428,11 @@ mod tests {
                     )),
                     score: 123,
                     nodes: 456,
+                    pv: vec![Move::new(
+                        Square::from_rf(1, 4),
+                        Square::from_rf(3, 4),
+                        MoveKind::DoublePawnPush,
+                    )],
                 },
             )),
             played_moves: Vec::new(),
