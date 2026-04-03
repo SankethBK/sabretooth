@@ -1,7 +1,9 @@
+use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 use crate::board::Board;
 use crate::types::{Color, Move};
+use crate::uci::move_to_uci;
 
 pub const DEFAULT_SEARCH_DEPTH: u32 = 6;
 pub const MAX_TIMED_SEARCH_DEPTH: u32 = 64;
@@ -29,19 +31,27 @@ pub struct RootMoveLine {
     pub line: Vec<Move>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SearchOptions {
+    pub emit_info: bool,
+    pub move_time: Option<Duration>,
+}
+
 pub fn find_best_move(board: &mut Board, depth: u32) -> Option<Move> {
     search(board, depth).best_move
 }
 
 pub fn search(board: &mut Board, depth: u32) -> SearchResult {
-    search_with_deadline(board, depth, None)
+    search_with_options(board, depth, SearchOptions::default())
 }
 
-pub fn search_for_duration(board: &mut Board, depth: u32, move_time: Duration) -> SearchResult {
-    search_with_deadline(board, depth, Some(Instant::now() + move_time))
-}
+pub fn search_with_options(
+    board: &mut Board,
+    depth: u32,
+    options: SearchOptions,
+) -> SearchResult {
+    let deadline = options.move_time.map(|move_time| Instant::now() + move_time);
 
-fn search_with_deadline(board: &mut Board, depth: u32, deadline: Option<Instant>) -> SearchResult {
     if depth == 0 {
         return search_with_pv_hint(board, 0, &[], deadline).0;
     }
@@ -53,6 +63,7 @@ fn search_with_deadline(board: &mut Board, depth: u32, deadline: Option<Instant>
 
     let mut pv_hint = result.pv.clone();
     let mut nodes = result.nodes;
+    emit_search_info(1, &result, options);
 
     for current_depth in 2..=depth {
         let (current_result, current_completed) =
@@ -64,8 +75,10 @@ fn search_with_deadline(board: &mut Board, depth: u32, deadline: Option<Instant>
         }
 
         result = current_result;
+        result.nodes = nodes;
         pv_hint = result.pv.clone();
         completed = current_completed;
+        emit_search_info(current_depth, &result, options);
     }
 
     result.nodes = nodes;
@@ -296,6 +309,36 @@ fn negamax(
 fn should_stop(nodes: u64, deadline: Option<Instant>) -> bool {
     nodes % DEADLINE_CHECK_INTERVAL == 0
         && deadline.is_some_and(|deadline| Instant::now() >= deadline)
+}
+
+fn emit_search_info(depth: u32, result: &SearchResult, options: SearchOptions) {
+    if !options.emit_info {
+        return;
+    }
+
+    let pv_text = result
+        .pv
+        .iter()
+        .copied()
+        .map(move_to_uci)
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let mut stdout = io::stdout().lock();
+    let write_result = if pv_text.is_empty() {
+        writeln!(
+            stdout,
+            "info depth {} score cp {} nodes {}",
+            depth, result.score, result.nodes
+        )
+    } else {
+        writeln!(
+            stdout,
+            "info depth {} score cp {} nodes {} pv {}",
+            depth, result.score, result.nodes, pv_text
+        )
+    };
+    let _ = write_result.and_then(|_| stdout.flush());
 }
 
 fn order_moves_by_hint(moves: &mut [Move], hint: Option<Move>) {

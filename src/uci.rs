@@ -4,8 +4,8 @@ use std::time::Duration;
 use crate::book::next_book_move;
 use crate::board::Board;
 use crate::search::{
-    DEFAULT_SEARCH_DEPTH, MAX_TIMED_SEARCH_DEPTH, SearchResult, parse_go_depth, search,
-    search_for_duration, search_root_move_lines,
+    DEFAULT_SEARCH_DEPTH, MAX_TIMED_SEARCH_DEPTH, SearchOptions, SearchResult, parse_go_depth,
+    search, search_root_move_lines, search_with_options,
 };
 use crate::types::{Color, Move, MoveKind, Piece, Square};
 
@@ -187,11 +187,14 @@ impl Engine {
             }
         }
 
-        let result = if let Some(move_time) = go.move_time {
-            search_for_duration(&mut self.board, go.depth, move_time)
-        } else {
-            search(&mut self.board, go.depth)
-        };
+        let result = search_with_options(
+            &mut self.board,
+            go.depth,
+            SearchOptions {
+                emit_info: true,
+                move_time: go.move_time,
+            },
+        );
 
         if let Some(bestmove) = result.best_move {
             writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
@@ -591,5 +594,21 @@ mod tests {
 
         assert_eq!(go.depth, 5);
         assert_eq!(go.move_time, Some(Duration::from_millis(1990)));
+    }
+
+    #[test]
+    fn go_command_prints_bestmove() {
+        let mut engine = Engine {
+            board: Board::starting_position(),
+            last_search: None,
+            played_moves: Vec::new(),
+            book_history_valid: false,
+        };
+        let mut output = Vec::new();
+
+        engine.handle_go("go depth 2", &mut output).unwrap();
+
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("bestmove "));
     }
 }
