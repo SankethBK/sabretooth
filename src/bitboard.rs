@@ -6,18 +6,6 @@ fn bit(square: Square) -> Bitboard {
     1u64 << square.0
 }
 
-fn set_bit(bb: &mut Bitboard, square: Square) {
-    *bb |= bit(square);
-}
-
-fn clear_bit(bb: &mut Bitboard, square: Square) {
-    *bb &= !bit(square);
-}
-
-fn get_bit(bb: Bitboard, square: Square) -> bool {
-    bb & bit(square) != 0
-}
-
 pub fn lsb(bb: Bitboard) -> Square {
     Square::from_index(bb.trailing_zeros() as u8) //  same as __builtin_ctzll in C++
 }
