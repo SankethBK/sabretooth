@@ -30,9 +30,29 @@ pub fn find_best_move(board: &mut Board, depth: u32) -> Option<Move> {
 }
 
 pub fn search(board: &mut Board, depth: u32) -> SearchResult {
+    if depth == 0 {
+        return search_with_pv_hint(board, 0, &[]);
+    }
+
+    let mut result = search_with_pv_hint(board, 1, &[]);
+    let mut pv_hint = result.pv.clone();
+    let mut nodes = result.nodes;
+
+    for current_depth in 2..=depth {
+        result = search_with_pv_hint(board, current_depth, &pv_hint);
+        pv_hint = result.pv.clone();
+        nodes += result.nodes;
+    }
+
+    result.nodes = nodes;
+    result
+}
+
+pub fn search_with_pv_hint(board: &mut Board, depth: u32, pv_hint: &[Move]) -> SearchResult {
     let mut nodes = 1;
     let mut pv = PrincipalVariation::new();
-    let legal_moves = board.generate_legal_moves();
+    let mut legal_moves = board.generate_legal_moves();
+    order_moves_by_hint(&mut legal_moves, pv_hint.first().copied());
 
     if legal_moves.is_empty() {
         let score = if board.is_in_check(board.side_to_move()) {
@@ -63,6 +83,7 @@ pub fn search(board: &mut Board, depth: u32) -> SearchResult {
             1,
             &mut nodes,
             &mut pv,
+            pv_hint,
         );
         board.unmake_move();
 
@@ -99,6 +120,7 @@ pub fn search_root_moves(board: &mut Board, depth: u32) -> Vec<RootMoveScore> {
             1,
             &mut nodes,
             &mut pv,
+            &[],
         );
         board.unmake_move();
         scored_moves.push(RootMoveScore { mv, score });
@@ -129,6 +151,7 @@ pub fn search_root_move_lines(board: &mut Board, depth: u32) -> Vec<RootMoveLine
             1,
             &mut nodes,
             &mut pv,
+            &[],
         );
         let (child_score, child_line) =
             (child_score, pv.line_at(1).to_vec());
@@ -165,6 +188,7 @@ fn negamax(
     ply: u32,
     nodes: &mut u64,
     pv: &mut PrincipalVariation,
+    pv_hint: &[Move],
 ) -> i32 {
     *nodes += 1;
 
@@ -174,11 +198,12 @@ fn negamax(
         return side_to_move_eval(board);
     }
 
-    let legal_moves = board.generate_legal_moves();
+    let mut legal_moves = board.generate_legal_moves();
     if legal_moves.is_empty() {
         pv.clear_at(ply as usize);
         return terminal_score(in_check, ply);
     }
+    order_moves_by_hint(&mut legal_moves, pv_hint.get(ply as usize).copied());
 
     let mut best_score = i32::MIN;
 
@@ -192,6 +217,7 @@ fn negamax(
             ply + 1,
             nodes,
             pv,
+            pv_hint,
         );
         board.unmake_move();
 
@@ -208,6 +234,16 @@ fn negamax(
     }
 
     best_score
+}
+
+fn order_moves_by_hint(moves: &mut [Move], hint: Option<Move>) {
+    let Some(hint) = hint else {
+        return;
+    };
+
+    if let Some(idx) = moves.iter().position(|&mv| mv == hint) {
+        moves.swap(0, idx);
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -266,6 +302,7 @@ mod tests {
     use super::*;
     use crate::board::Board;
     use crate::testsuite::bk_depth_report;
+    use crate::types::{MoveKind, Square};
     use crate::uci::move_to_uci;
 
     #[test]
@@ -306,6 +343,7 @@ mod tests {
             1,
             &mut nodes,
             &mut PrincipalVariation::new(),
+            &[],
         );
         let slower_mate = negamax(
             &mut board,
@@ -315,6 +353,7 @@ mod tests {
             3,
             &mut nodes,
             &mut PrincipalVariation::new(),
+            &[],
         );
 
         assert_eq!(immediate_mate, -MATE_SCORE + 1);
@@ -364,6 +403,20 @@ mod tests {
         let result = search(&mut board, 2);
 
         assert!(result.nodes > 1);
+    }
+
+    #[test]
+    fn order_moves_by_hint_moves_pv_move_to_front() {
+        let mut moves = vec![
+            Move::new(Square::from_rf(1, 3), Square::from_rf(3, 3), MoveKind::DoublePawnPush),
+            Move::new(Square::from_rf(1, 4), Square::from_rf(3, 4), MoveKind::DoublePawnPush),
+            Move::new(Square::from_rf(0, 6), Square::from_rf(2, 5), MoveKind::Quiet),
+        ];
+        let hint = moves[1];
+
+        order_moves_by_hint(&mut moves, Some(hint));
+
+        assert_eq!(moves[0], hint);
     }
 
     #[test]
