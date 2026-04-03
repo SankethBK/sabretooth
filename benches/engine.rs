@@ -35,8 +35,8 @@ fn bench_search(c: &mut Criterion) {
     let mut group = c.benchmark_group("search");
 
     group.sample_size(10);
-    group.warm_up_time(Duration::from_millis(300));
-    group.measurement_time(Duration::from_secs(1));
+    group.warm_up_time(Duration::from_millis(1000));
+    group.measurement_time(Duration::from_secs(15));
 
     group.bench_function("startpos_depth_4", |b| {
         b.iter(|| {
@@ -49,7 +49,37 @@ fn bench_search(c: &mut Criterion) {
         b.iter(|| {
             let mut board =
                 Board::from_fen("1k1r4/pp1b1R2/3q2pp/4p3/2B5/4Q3/PPP2B2/2K5 b - - 0 1").unwrap();
-            black_box(search(&mut board, 4))
+            black_box(search(&mut board, 5))
+        });
+    });
+
+    group.bench_function("bk05_depth_5", |b| {
+        b.iter(|| {
+            let mut board =
+                Board::from_fen("r1b2rk1/2q1b1pp/p2ppn2/1p6/3QP3/1BN1B3/PPP3PP/R4RK1 w - - 0 1")
+                    .unwrap();
+            black_box(search(&mut board, 5))
+        });
+    });
+
+    group.bench_function("bk11_depth_5", |b| {
+        b.iter(|| {
+            let mut board = Board::from_fen(
+                "2r1nrk1/p2q1ppp/bp1p4/n1pPp3/P1P1P3/2PBB1N1/4QPPP/R4RK1 w - - 0 1",
+            )
+            .unwrap();
+            black_box(search(&mut board, 5))
+        });
+    });
+
+    //
+
+    group.bench_function("bk14_depth_5", |b| {
+        b.iter(|| {
+            let mut board =
+                Board::from_fen("rnb2r1k/pp2p2p/2pp2p1/q2P1p2/8/1Pb2NP1/PB2PPBP/R2Q1RK1 w - - 0 1")
+                    .unwrap();
+            black_box(search(&mut board, 5))
         });
     });
 
