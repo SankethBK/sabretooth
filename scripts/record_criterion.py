@@ -7,6 +7,7 @@ import socket
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 
@@ -49,7 +50,11 @@ def main() -> int:
     return 0
 
 
-def run_bench(repo_root: Path, bench_name: str, bench_filter: str | None) -> None:
+def run_bench(
+    repo_root: Path,
+    bench_name: str,
+    bench_filter: Optional[str],
+) -> None:
     command = ["cargo", "bench", "--bench", bench_name]
     if bench_filter:
         command.extend(["--", bench_filter])
@@ -60,8 +65,8 @@ def run_bench(repo_root: Path, bench_name: str, bench_filter: str | None) -> Non
 def collect_run_record(
     repo_root: Path,
     machine_label: str,
-    bench_filter: str | None,
-) -> dict:
+    bench_filter: Optional[str],
+) -> Dict[str, Any]:
     criterion_root = repo_root / "target" / "criterion"
     benchmark_results = []
 
@@ -109,14 +114,14 @@ def collect_run_record(
     }
 
 
-def append_run_record(path: Path, run_record: dict) -> None:
+def append_run_record(path: Path, run_record: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as f:
         f.write(json.dumps(run_record, sort_keys=True))
         f.write("\n")
 
 
-def git_output(repo_root: Path, command: list[str]) -> str:
+def git_output(repo_root: Path, command: List[str]) -> str:
     return subprocess.run(
         command,
         cwd=repo_root,
