@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn bk_suite_positions_match_legal_san_moves() {
         let cases = parse_epd_cases(include_str!("../testdata/bk.epd"));
-        assert_eq!(cases.len(), 24);
+        assert_eq!(cases.len(), 25);
 
         for case in cases {
             let mut board = Board::from_fen(&case.fen).expect("BK case FEN must parse");
