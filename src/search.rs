@@ -8,6 +8,7 @@ use crate::uci::move_to_uci;
 
 pub const DEFAULT_SEARCH_DEPTH: u32 = 6;
 pub const MAX_TIMED_SEARCH_DEPTH: u32 = 64;
+const MAX_SEARCH_PLY: usize = 64;
 const MATE_SCORE: i32 = 1_000_000;
 const DEADLINE_CHECK_INTERVAL: u64 = 2048;
 
@@ -38,6 +39,46 @@ pub struct SearchOptions {
     pub move_time: Option<Duration>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchState {
+    killers: [[Option<Move>; 2]; MAX_SEARCH_PLY],
+    history: [[i32; 64]; 64],
+}
+
+impl SearchState {
+    pub(crate) fn new() -> Self {
+        Self {
+            killers: [[None; 2]; MAX_SEARCH_PLY],
+            history: [[0; 64]; 64],
+        }
+    }
+
+    pub fn killers(&self, ply: usize) -> [Option<Move>; 2] {
+        self.killers.get(ply).copied().unwrap_or([None; 2])
+    }
+
+    pub fn history_score(&self, mv: Move) -> i32 {
+        self.history[mv.from.index()][mv.to.index()]
+    }
+
+    fn record_beta_cutoff(&mut self, mv: Move, ply: usize, depth: u32) {
+        if mv.is_capture() || mv.is_promotion() {
+            return;
+        }
+
+        if let Some(killers) = self.killers.get_mut(ply) {
+            if killers[0] != Some(mv) {
+                killers[1] = killers[0];
+                killers[0] = Some(mv);
+            }
+        }
+
+        let bonus = (depth as i32).saturating_mul(depth as i32).max(1);
+        let history = &mut self.history[mv.from.index()][mv.to.index()];
+        *history = history.saturating_add(bonus);
+    }
+}
+
 pub fn find_best_move(board: &mut Board, depth: u32) -> Option<Move> {
     search(board, depth).best_move
 }
@@ -52,12 +93,13 @@ pub fn search_with_options(
     options: SearchOptions,
 ) -> SearchResult {
     let deadline = options.move_time.map(|move_time| Instant::now() + move_time);
+    let mut state = SearchState::new();
 
     if depth == 0 {
-        return search_with_pv_hint(board, 0, &[], deadline).0;
+        return search_with_pv_hint(board, 0, &[], deadline, &mut state).0;
     }
 
-    let (mut result, mut completed) = search_with_pv_hint(board, 1, &[], deadline);
+    let (mut result, mut completed) = search_with_pv_hint(board, 1, &[], deadline, &mut state);
     if !completed {
         return result;
     }
@@ -68,7 +110,7 @@ pub fn search_with_options(
 
     for current_depth in 2..=depth {
         let (current_result, current_completed) =
-            search_with_pv_hint(board, current_depth, &pv_hint, deadline);
+            search_with_pv_hint(board, current_depth, &pv_hint, deadline, &mut state);
         nodes += current_result.nodes;
 
         if !current_completed {
@@ -92,10 +134,11 @@ pub fn search_with_pv_hint(
     depth: u32,
     pv_hint: &[Move],
     deadline: Option<Instant>,
+    state: &mut SearchState,
 ) -> (SearchResult, bool) {
     let mut nodes = 1;
     let mut pv = PrincipalVariation::new();
-    let move_picker = MovePicker::new(board, pv_hint.first().copied());
+    let move_picker = MovePicker::new(board, pv_hint.first().copied(), state, 0);
     let mut timed_out = false;
 
     if move_picker.is_empty() {
@@ -133,6 +176,7 @@ pub fn search_with_pv_hint(
             pv_hint,
             deadline,
             &mut timed_out,
+            state,
         );
         board.unmake_move();
 
@@ -167,6 +211,7 @@ pub fn search_root_moves(board: &mut Board, depth: u32) -> Vec<RootMoveScore> {
         board.make_move(mv);
         let mut nodes = 1;
         let mut pv = PrincipalVariation::new();
+        let mut state = SearchState::new();
         let score = -negamax(
             board,
             depth.saturating_sub(1),
@@ -178,6 +223,7 @@ pub fn search_root_moves(board: &mut Board, depth: u32) -> Vec<RootMoveScore> {
             &[],
             None,
             &mut false,
+            &mut state,
         );
         board.unmake_move();
         scored_moves.push(RootMoveScore { mv, score });
@@ -200,6 +246,7 @@ pub fn search_root_move_lines(board: &mut Board, depth: u32) -> Vec<RootMoveLine
         board.make_move(mv);
         let mut nodes = 1;
         let mut pv = PrincipalVariation::new();
+        let mut state = SearchState::new();
         let child_score = negamax(
             board,
             depth.saturating_sub(1),
@@ -211,6 +258,7 @@ pub fn search_root_move_lines(board: &mut Board, depth: u32) -> Vec<RootMoveLine
             &[],
             None,
             &mut false,
+            &mut state,
         );
         let (child_score, child_line) = (child_score, pv.line_at(1).to_vec());
         board.unmake_move();
@@ -249,6 +297,7 @@ fn negamax(
     pv_hint: &[Move],
     deadline: Option<Instant>,
     timed_out: &mut bool,
+    state: &mut SearchState,
 ) -> i32 {
     *nodes += 1;
     if should_stop(*nodes, deadline) {
@@ -262,7 +311,7 @@ fn negamax(
         return side_to_move_eval(board);
     }
 
-    let move_picker = MovePicker::new(board, pv_hint.get(ply as usize).copied());
+    let move_picker = MovePicker::new(board, pv_hint.get(ply as usize).copied(), state, ply as usize);
     if move_picker.is_empty() {
         pv.clear_at(ply as usize);
         return terminal_score(in_check, ply);
@@ -283,6 +332,7 @@ fn negamax(
             pv_hint,
             deadline,
             timed_out,
+            state,
         );
         board.unmake_move();
 
@@ -298,6 +348,7 @@ fn negamax(
         alpha = alpha.max(score);
 
         if alpha >= beta {
+            state.record_beta_cutoff(mv, ply as usize, depth);
             break;
         }
     }
@@ -439,6 +490,7 @@ mod tests {
             &[],
             None,
             &mut false,
+            &mut SearchState::new(),
         );
         let slower_mate = negamax(
             &mut board,
@@ -451,6 +503,7 @@ mod tests {
             &[],
             None,
             &mut false,
+            &mut SearchState::new(),
         );
 
         assert_eq!(immediate_mate, -MATE_SCORE + 1);
