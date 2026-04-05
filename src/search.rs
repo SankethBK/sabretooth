@@ -46,10 +46,20 @@ pub struct SearchState {
 }
 
 impl SearchState {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             killers: [[None; 2]; MAX_SEARCH_PLY],
             history: [[0; 64]; 64],
+        }
+    }
+
+    pub fn reset_for_new_search(&mut self) {
+        self.killers = [[None; 2]; MAX_SEARCH_PLY];
+
+        for from in &mut self.history {
+            for score in from {
+                *score /= 2;
+            }
         }
     }
 
@@ -84,22 +94,23 @@ pub fn find_best_move(board: &mut Board, depth: u32) -> Option<Move> {
 }
 
 pub fn search(board: &mut Board, depth: u32) -> SearchResult {
-    search_with_options(board, depth, SearchOptions::default())
+    let mut state = SearchState::new();
+    search_with_options(board, depth, SearchOptions::default(), &mut state)
 }
 
 pub fn search_with_options(
     board: &mut Board,
     depth: u32,
     options: SearchOptions,
+    state: &mut SearchState,
 ) -> SearchResult {
     let deadline = options.move_time.map(|move_time| Instant::now() + move_time);
-    let mut state = SearchState::new();
 
     if depth == 0 {
-        return search_with_pv_hint(board, 0, &[], deadline, &mut state).0;
+        return search_with_pv_hint(board, 0, &[], deadline, state).0;
     }
 
-    let (mut result, mut completed) = search_with_pv_hint(board, 1, &[], deadline, &mut state);
+    let (mut result, mut completed) = search_with_pv_hint(board, 1, &[], deadline, state);
     if !completed {
         return result;
     }
@@ -110,7 +121,7 @@ pub fn search_with_options(
 
     for current_depth in 2..=depth {
         let (current_result, current_completed) =
-            search_with_pv_hint(board, current_depth, &pv_hint, deadline, &mut state);
+            search_with_pv_hint(board, current_depth, &pv_hint, deadline, state);
         nodes += current_result.nodes;
 
         if !current_completed {

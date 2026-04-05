@@ -4,8 +4,8 @@ use std::time::Duration;
 use crate::book::next_book_move;
 use crate::board::Board;
 use crate::search::{
-    DEFAULT_SEARCH_DEPTH, MAX_TIMED_SEARCH_DEPTH, SearchOptions, SearchResult, parse_go_depth,
-    search, search_root_move_lines, search_with_options,
+    DEFAULT_SEARCH_DEPTH, MAX_TIMED_SEARCH_DEPTH, SearchOptions, SearchResult, SearchState,
+    parse_go_depth, search, search_root_move_lines, search_with_options,
 };
 use crate::types::{Color, Move, MoveKind, Piece, Square};
 
@@ -17,6 +17,7 @@ pub struct Engine {
     last_search: Option<(u32, SearchResult)>,
     played_moves: Vec<String>,
     book_history_valid: bool,
+    search_state: SearchState,
 }
 
 impl Engine {
@@ -26,6 +27,7 @@ impl Engine {
             last_search: None,
             played_moves: Vec::new(),
             book_history_valid: true,
+            search_state: SearchState::new(),
         }
     }
 
@@ -60,6 +62,7 @@ impl Engine {
                 self.last_search = None;
                 self.played_moves.clear();
                 self.book_history_valid = true;
+                self.search_state = SearchState::new();
             }
             "eval" => {
                 self.handle_eval(out)?;
@@ -148,6 +151,7 @@ impl Engine {
         self.last_search = None;
         self.played_moves = played_moves;
         self.book_history_valid = book_history_valid;
+        self.search_state = SearchState::new();
         Ok(())
     }
 
@@ -171,6 +175,7 @@ impl Engine {
         self.board.make_move(mv);
         self.last_search = None;
         self.played_moves.push(uci.to_string());
+        self.search_state = SearchState::new();
         Ok(())
     }
 
@@ -187,6 +192,7 @@ impl Engine {
             }
         }
 
+        self.search_state.reset_for_new_search();
         let result = search_with_options(
             &mut self.board,
             go.depth,
@@ -194,6 +200,7 @@ impl Engine {
                 emit_info: true,
                 move_time: go.move_time,
             },
+            &mut self.search_state,
         );
 
         if let Some(bestmove) = result.best_move {
@@ -449,6 +456,7 @@ mod tests {
             last_search: None,
             played_moves: Vec::new(),
             book_history_valid: true,
+            search_state: SearchState::new(),
         };
         let mut output = Vec::new();
 
@@ -468,6 +476,7 @@ mod tests {
             last_search: None,
             played_moves: Vec::new(),
             book_history_valid: true,
+            search_state: SearchState::new(),
         };
         let mut output = Vec::new();
 
@@ -503,6 +512,7 @@ mod tests {
             )),
             played_moves: Vec::new(),
             book_history_valid: true,
+            search_state: SearchState::new(),
         };
         let mut output = Vec::new();
 
@@ -522,6 +532,7 @@ mod tests {
             last_search: None,
             played_moves: Vec::new(),
             book_history_valid: true,
+            search_state: SearchState::new(),
         };
 
         engine.handle_move("move e2e4").unwrap();
@@ -540,6 +551,7 @@ mod tests {
             last_search: None,
             played_moves: Vec::new(),
             book_history_valid: true,
+            search_state: SearchState::new(),
         };
         let mut output = Vec::new();
 
@@ -558,6 +570,7 @@ mod tests {
             last_search: None,
             played_moves: Vec::new(),
             book_history_valid: true,
+            search_state: SearchState::new(),
         };
         let mut output = Vec::new();
 
@@ -603,6 +616,7 @@ mod tests {
             last_search: None,
             played_moves: Vec::new(),
             book_history_valid: false,
+            search_state: SearchState::new(),
         };
         let mut output = Vec::new();
 
