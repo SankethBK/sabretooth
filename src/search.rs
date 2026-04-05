@@ -2,6 +2,7 @@ use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 use crate::board::Board;
+use crate::movepicker::MovePicker;
 use crate::types::{Color, Move};
 use crate::uci::move_to_uci;
 
@@ -94,11 +95,10 @@ pub fn search_with_pv_hint(
 ) -> (SearchResult, bool) {
     let mut nodes = 1;
     let mut pv = PrincipalVariation::new();
-    let mut legal_moves = board.generate_legal_moves();
-    order_moves_by_hint(&mut legal_moves, pv_hint.first().copied());
+    let move_picker = MovePicker::new(board, pv_hint.first().copied());
     let mut timed_out = false;
 
-    if legal_moves.is_empty() {
+    if move_picker.is_empty() {
         let score = if board.is_in_check(board.side_to_move()) {
             -MATE_SCORE
         } else {
@@ -120,7 +120,7 @@ pub fn search_with_pv_hint(
     let mut alpha = i32::MIN + 1;
     let beta = i32::MAX;
 
-    for mv in legal_moves {
+    for mv in move_picker {
         board.make_move(mv);
         let score = -negamax(
             board,
@@ -262,16 +262,15 @@ fn negamax(
         return side_to_move_eval(board);
     }
 
-    let mut legal_moves = board.generate_legal_moves();
-    if legal_moves.is_empty() {
+    let move_picker = MovePicker::new(board, pv_hint.get(ply as usize).copied());
+    if move_picker.is_empty() {
         pv.clear_at(ply as usize);
         return terminal_score(in_check, ply);
     }
-    order_moves_by_hint(&mut legal_moves, pv_hint.get(ply as usize).copied());
 
     let mut best_score = i32::MIN;
 
-    for mv in legal_moves {
+    for mv in move_picker {
         board.make_move(mv);
         let score = -negamax(
             board,
@@ -341,16 +340,6 @@ fn emit_search_info(depth: u32, result: &SearchResult, options: SearchOptions) {
     let _ = write_result.and_then(|_| stdout.flush());
 }
 
-fn order_moves_by_hint(moves: &mut [Move], hint: Option<Move>) {
-    let Some(hint) = hint else {
-        return;
-    };
-
-    if let Some(idx) = moves.iter().position(|&mv| mv == hint) {
-        moves.swap(0, idx);
-    }
-}
-
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct PrincipalVariation {
     lines: Vec<Vec<Move>>,
@@ -407,7 +396,6 @@ mod tests {
     use super::*;
     use crate::board::Board;
     use crate::testsuite::bk_depth_report;
-    use crate::types::{MoveKind, Square};
     use crate::uci::move_to_uci;
 
     #[test]
@@ -512,32 +500,6 @@ mod tests {
         let result = search(&mut board, 2);
 
         assert!(result.nodes > 1);
-    }
-
-    #[test]
-    fn order_moves_by_hint_moves_pv_move_to_front() {
-        let mut moves = vec![
-            Move::new(
-                Square::from_rf(1, 3),
-                Square::from_rf(3, 3),
-                MoveKind::DoublePawnPush,
-            ),
-            Move::new(
-                Square::from_rf(1, 4),
-                Square::from_rf(3, 4),
-                MoveKind::DoublePawnPush,
-            ),
-            Move::new(
-                Square::from_rf(0, 6),
-                Square::from_rf(2, 5),
-                MoveKind::Quiet,
-            ),
-        ];
-        let hint = moves[1];
-
-        order_moves_by_hint(&mut moves, Some(hint));
-
-        assert_eq!(moves[0], hint);
     }
 
     #[test]

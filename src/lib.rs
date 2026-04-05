@@ -3,6 +3,7 @@ pub mod bitboard;
 pub mod book;
 pub mod board;
 pub mod movegen;
+pub mod movepicker;
 pub mod search;
 pub mod types;
 pub mod uci;
