@@ -9,13 +9,8 @@ pub struct MovePicker {
 }
 
 impl MovePicker {
-    pub fn new(
-        board: &mut Board,
-        pv_hint: Option<Move>,
-        state: &SearchState,
-        ply: usize,
-    ) -> Self {
-        let mut moves = board.generate_legal_moves();
+    pub fn new(board: &mut Board, pv_hint: Option<Move>, state: &SearchState, ply: usize) -> Self {
+        let mut moves = board.generate_pseudo_legal_moves();
         let mut scored_moves = moves
             .drain(..)
             .map(|mv| (score_move(board, mv, pv_hint, state, ply), mv))
