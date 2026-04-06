@@ -174,7 +174,8 @@ pub fn search_with_pv_hint(
     let mut alpha = i32::MIN + 1;
     let beta = i32::MAX;
 
-    for mv in move_picker {
+    let mut move_picker = move_picker;
+    while let Some(mv) = move_picker.next_move(board, state, 0) {
         board.make_move(mv);
         let score = -negamax(
             board,
@@ -330,7 +331,8 @@ fn negamax(
 
     let mut best_score = i32::MIN;
 
-    for mv in move_picker {
+    let mut move_picker = move_picker;
+    while let Some(mv) = move_picker.next_move(board, state, ply as usize) {
         board.make_move(mv);
         let score = -negamax(
             board,
