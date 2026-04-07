@@ -3,10 +3,21 @@ use crate::bitboard::pop_lsb;
 use crate::board::Board;
 use crate::types::{CastlingRights, Color, Move, MoveKind, Piece, Square};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoveGenType {
+    Captures,
+    Quiets,
+    NonEvasions,
+}
+
 impl Board {
     pub fn generate_legal_moves(&mut self) -> Vec<Move> {
+        self.generate_legal_moves_by_type(MoveGenType::NonEvasions)
+    }
+
+    pub fn generate_legal_moves_by_type(&mut self, gen_type: MoveGenType) -> Vec<Move> {
         let us = self.side_to_move;
-        let pseudo = self.generate_pseudo_legal_moves();
+        let pseudo = self.generate_pseudo_legal_moves_by_type(gen_type);
         let mut legal = Vec::new();
 
         for mv in pseudo {
@@ -21,18 +32,24 @@ impl Board {
     }
 
     pub fn generate_pseudo_legal_moves(&self) -> Vec<Move> {
+        self.generate_pseudo_legal_moves_by_type(MoveGenType::NonEvasions)
+    }
+
+    pub fn generate_pseudo_legal_moves_by_type(&self, gen_type: MoveGenType) -> Vec<Move> {
         let mut moves = Vec::new();
-        moves.extend(self.generate_pawn_moves());
-        moves.extend(self.generate_knight_moves());
-        moves.extend(self.generate_bishop_moves());
-        moves.extend(self.generate_rook_moves());
-        moves.extend(self.generate_queen_moves());
-        moves.extend(self.generate_king_moves());
-        moves.extend(self.generate_castling_moves());
+        moves.extend(self.generate_pawn_moves(gen_type));
+        moves.extend(self.generate_knight_moves(gen_type));
+        moves.extend(self.generate_bishop_moves(gen_type));
+        moves.extend(self.generate_rook_moves(gen_type));
+        moves.extend(self.generate_queen_moves(gen_type));
+        moves.extend(self.generate_king_moves(gen_type));
+        if gen_type != MoveGenType::Captures {
+            moves.extend(self.generate_castling_moves());
+        }
         moves
     }
 
-    pub fn generate_knight_moves(&self) -> Vec<Move> {
+    pub fn generate_knight_moves(&self, gen_type: MoveGenType) -> Vec<Move> {
         let us = self.side_to_move;
         let our_occupancy = self.occupancy(us);
         let their_occupancy = self.occupancy(us.opposite());
@@ -56,14 +73,16 @@ impl Board {
                     MoveKind::Quiet
                 };
 
-                moves.push(Move::new(from, to, kind));
+                if matches_movegen(kind, gen_type) {
+                    moves.push(Move::new(from, to, kind));
+                }
             }
         }
 
         moves
     }
 
-    pub fn generate_king_moves(&self) -> Vec<Move> {
+    pub fn generate_king_moves(&self, gen_type: MoveGenType) -> Vec<Move> {
         let us = self.side_to_move;
         let our_occupancy = self.occupancy(us);
         let their_occupancy = self.occupancy(us.opposite());
@@ -87,7 +106,9 @@ impl Board {
                     MoveKind::Quiet
                 };
 
-                moves.push(Move::new(from, to, kind));
+                if matches_movegen(kind, gen_type) {
+                    moves.push(Move::new(from, to, kind));
+                }
             }
         }
 
@@ -179,7 +200,7 @@ impl Board {
         moves
     }
 
-    pub fn generate_pawn_moves(&self) -> Vec<Move> {
+    pub fn generate_pawn_moves(&self, gen_type: MoveGenType) -> Vec<Move> {
         let us = self.side_to_move;
         let them = us.opposite();
         let all_occupancy = self.all_occupancy();
@@ -199,23 +220,26 @@ impl Board {
                     if rank < 7 && one_forward.to_bb() & all_occupancy == 0 {
                         if one_forward.rank() == 7 {
                             for piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
-                                moves.push(Move::new(
-                                    from,
-                                    one_forward,
-                                    MoveKind::Promotion(piece),
-                                ));
+                                let kind = MoveKind::Promotion(piece);
+                                if matches_movegen(kind, gen_type) {
+                                    moves.push(Move::new(from, one_forward, kind));
+                                }
                             }
                         } else {
-                            moves.push(Move::new(from, one_forward, MoveKind::Quiet));
+                            if matches_movegen(MoveKind::Quiet, gen_type) {
+                                moves.push(Move::new(from, one_forward, MoveKind::Quiet));
+                            }
 
                             if rank == 1 {
                                 let two_forward = Square::from_rf(rank + 2, from.file());
                                 if two_forward.to_bb() & all_occupancy == 0 {
-                                    moves.push(Move::new(
-                                        from,
-                                        two_forward,
-                                        MoveKind::DoublePawnPush,
-                                    ));
+                                    if matches_movegen(MoveKind::DoublePawnPush, gen_type) {
+                                        moves.push(Move::new(
+                                            from,
+                                            two_forward,
+                                            MoveKind::DoublePawnPush,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -229,23 +253,26 @@ impl Board {
                                 for piece in
                                     [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight]
                                 {
-                                    moves.push(Move::new(
-                                        from,
-                                        one_forward,
-                                        MoveKind::Promotion(piece),
-                                    ));
+                                    let kind = MoveKind::Promotion(piece);
+                                    if matches_movegen(kind, gen_type) {
+                                        moves.push(Move::new(from, one_forward, kind));
+                                    }
                                 }
                             } else {
-                                moves.push(Move::new(from, one_forward, MoveKind::Quiet));
+                                if matches_movegen(MoveKind::Quiet, gen_type) {
+                                    moves.push(Move::new(from, one_forward, MoveKind::Quiet));
+                                }
 
                                 if rank == 6 {
                                     let two_forward = Square::from_rf(rank - 2, from.file());
                                     if two_forward.to_bb() & all_occupancy == 0 {
-                                        moves.push(Move::new(
-                                            from,
-                                            two_forward,
-                                            MoveKind::DoublePawnPush,
-                                        ));
+                                        if matches_movegen(MoveKind::DoublePawnPush, gen_type) {
+                                            moves.push(Move::new(
+                                                from,
+                                                two_forward,
+                                                MoveKind::DoublePawnPush,
+                                            ));
+                                        }
                                     }
                                 }
                             }
@@ -264,12 +291,15 @@ impl Board {
                     }
                     if is_promotion_square(us, to) {
                         for piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
-                            moves.push(Move::new(from, to, MoveKind::PromotionCapture(piece)));
+                            let kind = MoveKind::PromotionCapture(piece);
+                            if matches_movegen(kind, gen_type) {
+                                moves.push(Move::new(from, to, kind));
+                            }
                         }
-                    } else {
+                    } else if matches_movegen(MoveKind::Capture, gen_type) {
                         moves.push(Move::new(from, to, MoveKind::Capture));
                     }
-                } else if self.en_passant == Some(to) {
+                } else if self.en_passant == Some(to) && matches_movegen(MoveKind::EnPassant, gen_type) {
                     moves.push(Move::new(from, to, MoveKind::EnPassant));
                 }
             }
@@ -278,19 +308,24 @@ impl Board {
         moves
     }
 
-    pub fn generate_bishop_moves(&self) -> Vec<Move> {
-        self.generate_slider_moves(Piece::Bishop, bishop_attacks)
+    pub fn generate_bishop_moves(&self, gen_type: MoveGenType) -> Vec<Move> {
+        self.generate_slider_moves(Piece::Bishop, bishop_attacks, gen_type)
     }
 
-    pub fn generate_rook_moves(&self) -> Vec<Move> {
-        self.generate_slider_moves(Piece::Rook, rook_attacks)
+    pub fn generate_rook_moves(&self, gen_type: MoveGenType) -> Vec<Move> {
+        self.generate_slider_moves(Piece::Rook, rook_attacks, gen_type)
     }
 
-    pub fn generate_queen_moves(&self) -> Vec<Move> {
-        self.generate_slider_moves(Piece::Queen, queen_attacks)
+    pub fn generate_queen_moves(&self, gen_type: MoveGenType) -> Vec<Move> {
+        self.generate_slider_moves(Piece::Queen, queen_attacks, gen_type)
     }
 
-    fn generate_slider_moves(&self, piece: Piece, attack_fn: fn(Square, u64) -> u64) -> Vec<Move> {
+    fn generate_slider_moves(
+        &self,
+        piece: Piece,
+        attack_fn: fn(Square, u64) -> u64,
+        gen_type: MoveGenType,
+    ) -> Vec<Move> {
         let us = self.side_to_move;
         let our_occupancy = self.occupancy(us);
         let their_occupancy = self.occupancy(us.opposite());
@@ -314,7 +349,9 @@ impl Board {
                     MoveKind::Quiet
                 };
 
-                moves.push(Move::new(from, to, kind));
+                if matches_movegen(kind, gen_type) {
+                    moves.push(Move::new(from, to, kind));
+                }
             }
         }
 
@@ -342,6 +379,24 @@ impl Board {
     }
 }
 
+fn matches_movegen(kind: MoveKind, gen_type: MoveGenType) -> bool {
+    match gen_type {
+        MoveGenType::Captures => matches!(
+            kind,
+            MoveKind::Capture | MoveKind::EnPassant | MoveKind::PromotionCapture(_)
+        ),
+        MoveGenType::Quiets => matches!(
+            kind,
+            MoveKind::Quiet
+                | MoveKind::DoublePawnPush
+                | MoveKind::CastleKingside
+                | MoveKind::CastleQueenside
+                | MoveKind::Promotion(_)
+        ),
+        MoveGenType::NonEvasions => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,7 +404,7 @@ mod tests {
     #[test]
     fn starting_position_has_four_knight_moves() {
         let board = Board::starting_position();
-        let moves = board.generate_knight_moves();
+        let moves = board.generate_knight_moves(MoveGenType::NonEvasions);
 
         assert_eq!(moves.len(), 4);
         assert!(moves.contains(&Move::new(
@@ -377,7 +432,7 @@ mod tests {
     #[test]
     fn knight_move_generation_marks_captures() {
         let board = Board::from_fen("8/8/8/8/8/2p5/8/1N6 w - - 0 1").unwrap();
-        let moves = board.generate_knight_moves();
+        let moves = board.generate_knight_moves(MoveGenType::NonEvasions);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(0, 1),
@@ -399,7 +454,7 @@ mod tests {
     #[test]
     fn king_move_generation_respects_friendly_blockers() {
         let board = Board::from_fen("8/8/8/8/3K4/3P4/8/8 w - - 0 1").unwrap();
-        let moves = board.generate_king_moves();
+        let moves = board.generate_king_moves(MoveGenType::NonEvasions);
 
         assert_eq!(moves.len(), 7);
         assert!(!moves.contains(&Move::new(
@@ -417,7 +472,7 @@ mod tests {
     #[test]
     fn king_move_generation_marks_captures() {
         let board = Board::from_fen("8/8/8/8/3Kp3/8/8/8 w - - 0 1").unwrap();
-        let moves = board.generate_king_moves();
+        let moves = board.generate_king_moves(MoveGenType::NonEvasions);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(3, 3),
@@ -434,7 +489,7 @@ mod tests {
     #[test]
     fn starting_position_has_sixteen_pawn_moves() {
         let board = Board::starting_position();
-        let moves = board.generate_pawn_moves();
+        let moves = board.generate_pawn_moves(MoveGenType::NonEvasions);
 
         assert_eq!(moves.len(), 16);
         assert!(moves.contains(&Move::new(
@@ -452,7 +507,7 @@ mod tests {
     #[test]
     fn pawn_move_generation_handles_captures_and_en_passant() {
         let board = Board::from_fen("8/8/8/3pP3/8/8/8/8 w - d6 0 1").unwrap();
-        let moves = board.generate_pawn_moves();
+        let moves = board.generate_pawn_moves(MoveGenType::NonEvasions);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(4, 4),
@@ -469,7 +524,7 @@ mod tests {
     #[test]
     fn pawn_move_generation_handles_promotions() {
         let board = Board::from_fen("1r6/P7/8/8/8/8/8/8 w - - 0 1").unwrap();
-        let moves = board.generate_pawn_moves();
+        let moves = board.generate_pawn_moves(MoveGenType::NonEvasions);
 
         for piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
             assert!(moves.contains(&Move::new(
@@ -489,15 +544,15 @@ mod tests {
     fn starting_position_has_no_bishop_rook_or_queen_moves() {
         let board = Board::starting_position();
 
-        assert_eq!(board.generate_bishop_moves().len(), 0);
-        assert_eq!(board.generate_rook_moves().len(), 0);
-        assert_eq!(board.generate_queen_moves().len(), 0);
+        assert_eq!(board.generate_bishop_moves(MoveGenType::NonEvasions).len(), 0);
+        assert_eq!(board.generate_rook_moves(MoveGenType::NonEvasions).len(), 0);
+        assert_eq!(board.generate_queen_moves(MoveGenType::NonEvasions).len(), 0);
     }
 
     #[test]
     fn bishop_move_generation_handles_quiets_and_captures() {
         let board = Board::from_fen("8/8/5p2/8/3B4/8/1P6/8 w - - 0 1").unwrap();
-        let moves = board.generate_bishop_moves();
+        let moves = board.generate_bishop_moves(MoveGenType::NonEvasions);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(3, 3),
@@ -519,7 +574,7 @@ mod tests {
     #[test]
     fn rook_move_generation_handles_quiets_and_captures() {
         let board = Board::from_fen("8/8/3p4/8/3R1P2/8/8/8 w - - 0 1").unwrap();
-        let moves = board.generate_rook_moves();
+        let moves = board.generate_rook_moves(MoveGenType::NonEvasions);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(3, 3),
@@ -541,7 +596,7 @@ mod tests {
     #[test]
     fn queen_move_generation_combines_rook_and_bishop_patterns() {
         let board = Board::from_fen("8/8/8/2p5/3Q4/5P2/8/8 w - - 0 1").unwrap();
-        let moves = board.generate_queen_moves();
+        let moves = board.generate_queen_moves(MoveGenType::NonEvasions);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(3, 3),
