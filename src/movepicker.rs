@@ -4,22 +4,21 @@ use crate::types::{Move, Piece};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MovePicker {
-    moves: Vec<Move>,
+    moves: Vec<(i32, Move)>,
     next_index: usize,
 }
 
 impl MovePicker {
     pub fn new(board: &mut Board, pv_hint: Option<Move>, state: &SearchState, ply: usize) -> Self {
-        let mut moves = board.generate_pseudo_legal_moves();
-        let mut scored_moves = moves
-            .drain(..)
+        let moves = board.generate_pseudo_legal_moves();
+
+        let scored_moves = moves
+            .into_iter()
             .map(|mv| (score_move(board, mv, pv_hint, state, ply), mv))
-            .collect::<Vec<_>>();
-        scored_moves.sort_by(|a, b| b.0.cmp(&a.0));
-        let moves = scored_moves.into_iter().map(|(_, mv)| mv).collect();
+            .collect();
 
         Self {
-            moves,
+            moves: scored_moves,
             next_index: 0,
         }
     }
@@ -33,8 +32,23 @@ impl Iterator for MovePicker {
     type Item = Move;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mv = self.moves.get(self.next_index).copied()?;
+        if self.next_index >= self.moves.len() {
+            return None;
+        }
+
+        let mut best_idx = self.next_index;
+
+        for i in (self.next_index + 1)..self.moves.len() {
+            if self.moves[i].0 > self.moves[best_idx].0 {
+                best_idx = i;
+            }
+        }
+
+        self.moves.swap(self.next_index, best_idx);
+
+        let mv = self.moves[self.next_index].1;
         self.next_index += 1;
+
         Some(mv)
     }
 }
