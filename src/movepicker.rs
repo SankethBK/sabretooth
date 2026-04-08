@@ -6,6 +6,7 @@ use crate::types::{Move, Piece};
 pub struct MovePicker {
     next_index: usize,
     buffer: Vec<(i32, Move)>,
+    move_buffer: Vec<Move>,
     pv_move: Option<Move>,
     stage: Stage,
 }
@@ -22,7 +23,8 @@ impl MovePicker {
     pub fn new(pv_hint: Option<Move>) -> Self {
         Self {
             next_index: 0,
-            buffer: Vec::new(),
+            buffer: Vec::with_capacity(64),
+            move_buffer: Vec::with_capacity(64),
             pv_move: pv_hint,
             stage: Stage::Pv,
         }
@@ -42,27 +44,32 @@ impl MovePicker {
             }
 
             Stage::Captures => {
-                let moves = board.generate_pseudo_legal_captures();
+                self.move_buffer.clear();
+                board.generate_pseudo_legal_captures_into(&mut self.move_buffer);
 
-                for mv in moves {
+                for &mv in &self.move_buffer {
                     if Some(mv) != self.pv_move {
                         let score = score_move(board, mv, None, state, ply);
                         self.buffer.push((score, mv));
                     }
                 }
+
+                self.buffer.sort_unstable_by(|a, b| b.0.cmp(&a.0));
 
                 self.stage = Stage::Quiets;
             }
 
             Stage::Quiets => {
-                let moves = board.generate_pseudo_legal_quiets();
+                self.move_buffer.clear();
+                board.generate_pseudo_legal_quiets_into(&mut self.move_buffer);
 
-                for mv in moves {
+                for &mv in &self.move_buffer {
                     if Some(mv) != self.pv_move {
                         let score = score_move(board, mv, None, state, ply);
                         self.buffer.push((score, mv));
                     }
                 }
+                self.buffer.sort_unstable_by(|a, b| b.0.cmp(&a.0));
 
                 self.stage = Stage::Done;
             }
@@ -92,7 +99,10 @@ impl MovePicker {
     }
 
     pub fn is_empty(&mut self, board: &mut Board, state: &SearchState, ply: usize) -> bool {
-        self.next_move(board, state, ply).is_none()
+        if self.buffer.is_empty() && self.stage != Stage::Done {
+            self.fill_next_stage(board, state, ply);
+        }
+        self.buffer.is_empty() && self.stage == Stage::Done
     }
 
     // Helper method to get all moves at once (for testing)

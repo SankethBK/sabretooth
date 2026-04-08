@@ -61,14 +61,38 @@ impl Board {
         moves
     }
 
+    pub fn generate_pseudo_legal_captures_into(&self, moves: &mut Vec<Move>) {
+        self.generate_pawn_moves_into(moves, GenType::Captures);
+        self.generate_knight_moves_into(moves, GenType::Captures);
+        self.generate_bishop_moves_into(moves, GenType::Captures);
+        self.generate_rook_moves_into(moves, GenType::Captures);
+        self.generate_queen_moves_into(moves, GenType::Captures);
+        self.generate_king_moves_into(moves, GenType::Captures);
+    }
+
+    pub fn generate_pseudo_legal_quiets_into(&self, moves: &mut Vec<Move>) {
+        self.generate_pawn_moves_into(moves, GenType::Quiets);
+        self.generate_knight_moves_into(moves, GenType::Quiets);
+        self.generate_bishop_moves_into(moves, GenType::Quiets);
+        self.generate_rook_moves_into(moves, GenType::Quiets);
+        self.generate_queen_moves_into(moves, GenType::Quiets);
+        self.generate_king_moves_into(moves, GenType::Quiets);
+        moves.extend(self.generate_castling_moves());
+    }
+
     pub fn generate_knight_moves(&self, gen_type: GenType) -> Vec<Move> {
+        let mut moves = Vec::with_capacity(16);
+        self.generate_knight_moves_into(&mut moves, gen_type);
+        moves
+    }
+
+    pub fn generate_knight_moves_into(&self, moves: &mut Vec<Move>, gen_type: GenType) {
         let us = self.side_to_move;
         let our_occupancy = self.occupancy(us);
         let their_occupancy = self.occupancy(us.opposite());
         let attacks = attack_table();
 
         let mut knights = self.piece_bb(us, Piece::Knight);
-        let mut moves = Vec::new();
 
         while knights != 0 {
             let from = pop_lsb(&mut knights);
@@ -94,18 +118,21 @@ impl Board {
                 moves.push(Move::new(from, to, kind));
             }
         }
-
-        moves
     }
 
     pub fn generate_king_moves(&self, gen_type: GenType) -> Vec<Move> {
+        let mut moves = Vec::with_capacity(8);
+        self.generate_king_moves_into(&mut moves, gen_type);
+        moves
+    }
+
+    pub fn generate_king_moves_into(&self, moves: &mut Vec<Move>, gen_type: GenType) {
         let us = self.side_to_move;
         let our_occupancy = self.occupancy(us);
         let their_occupancy = self.occupancy(us.opposite());
         let attacks = attack_table();
 
         let mut kings = self.piece_bb(us, Piece::King);
-        let mut moves = Vec::new();
 
         while kings != 0 {
             let from = pop_lsb(&mut kings);
@@ -131,8 +158,6 @@ impl Board {
                 moves.push(Move::new(from, to, kind));
             }
         }
-
-        moves
     }
 
     pub fn generate_castling_moves(&self) -> Vec<Move> {
@@ -221,6 +246,12 @@ impl Board {
     }
 
     pub fn generate_pawn_moves(&self, gen_type: GenType) -> Vec<Move> {
+        let mut moves = Vec::with_capacity(16);
+        self.generate_pawn_moves_into(&mut moves, gen_type);
+        moves
+    }
+
+    pub fn generate_pawn_moves_into(&self, moves: &mut Vec<Move>, gen_type: GenType) {
         let us = self.side_to_move;
         let them = us.opposite();
         let all_occupancy = self.all_occupancy();
@@ -228,7 +259,6 @@ impl Board {
         let attacks = attack_table();
 
         let mut pawns = self.piece_bb(us, Piece::Pawn);
-        let mut moves = Vec::new();
 
         while pawns != 0 {
             let from = pop_lsb(&mut pawns);
@@ -321,35 +351,51 @@ impl Board {
                 }
             }
         }
-
-        moves
     }
 
     pub fn generate_bishop_moves(&self, gen_type: GenType) -> Vec<Move> {
-        self.generate_slider_moves(Piece::Bishop, bishop_attacks, gen_type)
+        let mut moves = Vec::with_capacity(16);
+        self.generate_slider_moves_into(&mut moves, Piece::Bishop, bishop_attacks, gen_type);
+        moves
     }
 
     pub fn generate_rook_moves(&self, gen_type: GenType) -> Vec<Move> {
-        self.generate_slider_moves(Piece::Rook, rook_attacks, gen_type)
+        let mut moves = Vec::with_capacity(16);
+        self.generate_slider_moves_into(&mut moves, Piece::Rook, rook_attacks, gen_type);
+        moves
     }
 
     pub fn generate_queen_moves(&self, gen_type: GenType) -> Vec<Move> {
-        self.generate_slider_moves(Piece::Queen, queen_attacks, gen_type)
+        let mut moves = Vec::with_capacity(16);
+        self.generate_slider_moves_into(&mut moves, Piece::Queen, queen_attacks, gen_type);
+        moves
     }
 
-    fn generate_slider_moves(
+    pub fn generate_bishop_moves_into(&self, moves: &mut Vec<Move>, gen_type: GenType) {
+        self.generate_slider_moves_into(moves, Piece::Bishop, bishop_attacks, gen_type);
+    }
+
+    pub fn generate_rook_moves_into(&self, moves: &mut Vec<Move>, gen_type: GenType) {
+        self.generate_slider_moves_into(moves, Piece::Rook, rook_attacks, gen_type);
+    }
+
+    pub fn generate_queen_moves_into(&self, moves: &mut Vec<Move>, gen_type: GenType) {
+        self.generate_slider_moves_into(moves, Piece::Queen, queen_attacks, gen_type);
+    }
+
+    fn generate_slider_moves_into(
         &self,
+        moves: &mut Vec<Move>,
         piece: Piece,
         attack_fn: fn(Square, u64) -> u64,
         gen_type: GenType,
-    ) -> Vec<Move> {
+    ) {
         let us = self.side_to_move;
         let our_occupancy = self.occupancy(us);
         let their_occupancy = self.occupancy(us.opposite());
         let all_occupancy = self.all_occupancy();
 
         let mut pieces = self.piece_bb(us, piece);
-        let mut moves = Vec::new();
 
         while pieces != 0 {
             let from = pop_lsb(&mut pieces);
@@ -375,8 +421,6 @@ impl Board {
                 moves.push(Move::new(from, to, kind));
             }
         }
-
-        moves
     }
 
     pub fn perft(&mut self, depth: u32) -> u64 {
@@ -807,7 +851,7 @@ mod tests {
 
     #[test]
     fn knight_captures() {
-        let mut board = Board::from_fen("4k3/8/1b6/4p3/2N5/P3Q3/1n6/4K3 w - - 0 1").unwrap();
+        let board = Board::from_fen("4k3/8/1b6/4p3/2N5/P3Q3/1n6/4K3 w - - 0 1").unwrap();
         let moves = board.generate_knight_moves(GenType::Captures);
 
         assert_eq!(moves.len(), 3);
@@ -832,7 +876,7 @@ mod tests {
 
     #[test]
     fn knight_quiets() {
-        let mut board = Board::from_fen("4k3/8/1b6/4p3/2N5/P3Q3/1n6/4K3 w - - 0 1").unwrap();
+        let board = Board::from_fen("4k3/8/1b6/4p3/2N5/P3Q3/1n6/4K3 w - - 0 1").unwrap();
         let moves = board.generate_knight_moves(GenType::Quiets);
 
         assert_eq!(moves.len(), 3);
@@ -857,7 +901,7 @@ mod tests {
 
     #[test]
     fn king_captures() {
-        let mut board = Board::from_fen("8/8/2k5/3pp3/3K4/3Pn3/8/8 w - - 0 1").unwrap();
+        let board = Board::from_fen("8/8/2k5/3pp3/3K4/3Pn3/8/8 w - - 0 1").unwrap();
         let moves = board.generate_king_moves(GenType::Captures);
 
         assert_eq!(moves.len(), 3);
@@ -883,7 +927,7 @@ mod tests {
 
     #[test]
     fn king_quiets() {
-        let mut board = Board::from_fen("8/8/2k5/3pp3/3K4/3Pn3/8/8 w - - 0 1").unwrap();
+        let board = Board::from_fen("8/8/2k5/3pp3/3K4/3Pn3/8/8 w - - 0 1").unwrap();
         let moves = board.generate_king_moves(GenType::Quiets);
 
         assert_eq!(moves.len(), 4);
