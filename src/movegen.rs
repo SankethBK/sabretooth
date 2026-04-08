@@ -3,6 +3,12 @@ use crate::bitboard::pop_lsb;
 use crate::board::Board;
 use crate::types::{CastlingRights, Color, Move, MoveKind, Piece, Square};
 
+pub enum GenType {
+    Captures,
+    Quiets,
+    All,
+}
+
 impl Board {
     pub fn generate_legal_moves(&mut self) -> Vec<Move> {
         let us = self.side_to_move;
@@ -22,17 +28,40 @@ impl Board {
 
     pub fn generate_pseudo_legal_moves(&self) -> Vec<Move> {
         let mut moves = Vec::new();
-        moves.extend(self.generate_pawn_moves());
-        moves.extend(self.generate_knight_moves());
-        moves.extend(self.generate_bishop_moves());
-        moves.extend(self.generate_rook_moves());
-        moves.extend(self.generate_queen_moves());
-        moves.extend(self.generate_king_moves());
+        moves.extend(self.generate_pawn_moves(GenType::All));
+        moves.extend(self.generate_knight_moves(GenType::All));
+        moves.extend(self.generate_bishop_moves(GenType::All));
+        moves.extend(self.generate_rook_moves(GenType::All));
+        moves.extend(self.generate_queen_moves(GenType::All));
+        moves.extend(self.generate_king_moves(GenType::All));
         moves.extend(self.generate_castling_moves());
         moves
     }
 
-    pub fn generate_knight_moves(&self) -> Vec<Move> {
+    pub fn generate_pseudo_legal_quiets(&self) -> Vec<Move> {
+        let mut moves = Vec::new();
+        moves.extend(self.generate_pawn_moves(GenType::Quiets));
+        moves.extend(self.generate_knight_moves(GenType::Quiets));
+        moves.extend(self.generate_bishop_moves(GenType::Quiets));
+        moves.extend(self.generate_rook_moves(GenType::Quiets));
+        moves.extend(self.generate_queen_moves(GenType::Quiets));
+        moves.extend(self.generate_king_moves(GenType::Quiets));
+        moves.extend(self.generate_castling_moves());
+        moves
+    }
+
+    pub fn generate_pseudo_legal_captures(&self) -> Vec<Move> {
+        let mut moves = Vec::new();
+        moves.extend(self.generate_pawn_moves(GenType::Captures));
+        moves.extend(self.generate_knight_moves(GenType::Captures));
+        moves.extend(self.generate_bishop_moves(GenType::Captures));
+        moves.extend(self.generate_rook_moves(GenType::Captures));
+        moves.extend(self.generate_queen_moves(GenType::Captures));
+        moves.extend(self.generate_king_moves(GenType::Captures));
+        moves
+    }
+
+    pub fn generate_knight_moves(&self, gen_type: GenType) -> Vec<Move> {
         let us = self.side_to_move;
         let our_occupancy = self.occupancy(us);
         let their_occupancy = self.occupancy(us.opposite());
@@ -44,6 +73,12 @@ impl Board {
         while knights != 0 {
             let from = pop_lsb(&mut knights);
             let mut targets = attacks.knight[from.index()] & !our_occupancy;
+
+            match gen_type {
+                GenType::Captures => targets &= their_occupancy,
+                GenType::Quiets => targets &= !their_occupancy,
+                GenType::All => {}
+            }
 
             while targets != 0 {
                 let to = pop_lsb(&mut targets);
@@ -63,7 +98,7 @@ impl Board {
         moves
     }
 
-    pub fn generate_king_moves(&self) -> Vec<Move> {
+    pub fn generate_king_moves(&self, gen_type: GenType) -> Vec<Move> {
         let us = self.side_to_move;
         let our_occupancy = self.occupancy(us);
         let their_occupancy = self.occupancy(us.opposite());
@@ -75,6 +110,12 @@ impl Board {
         while kings != 0 {
             let from = pop_lsb(&mut kings);
             let mut targets = attacks.king[from.index()] & !our_occupancy;
+
+            match gen_type {
+                GenType::Captures => targets &= their_occupancy,
+                GenType::Quiets => targets &= !their_occupancy,
+                GenType::All => {}
+            }
 
             while targets != 0 {
                 let to = pop_lsb(&mut targets);
@@ -179,7 +220,7 @@ impl Board {
         moves
     }
 
-    pub fn generate_pawn_moves(&self) -> Vec<Move> {
+    pub fn generate_pawn_moves(&self, gen_type: GenType) -> Vec<Move> {
         let us = self.side_to_move;
         let them = us.opposite();
         let all_occupancy = self.all_occupancy();
@@ -195,34 +236,38 @@ impl Board {
 
             match us {
                 Color::White => {
-                    let one_forward = Square::from_rf(rank + 1, from.file());
-                    if rank < 7 && one_forward.to_bb() & all_occupancy == 0 {
-                        if one_forward.rank() == 7 {
-                            for piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
-                                moves.push(Move::new(
-                                    from,
-                                    one_forward,
-                                    MoveKind::Promotion(piece),
-                                ));
-                            }
-                        } else {
-                            moves.push(Move::new(from, one_forward, MoveKind::Quiet));
-
-                            if rank == 1 {
-                                let two_forward = Square::from_rf(rank + 2, from.file());
-                                if two_forward.to_bb() & all_occupancy == 0 {
+                    if !matches!(gen_type, GenType::Captures) {
+                        let one_forward = Square::from_rf(rank + 1, from.file());
+                        if rank < 7 && one_forward.to_bb() & all_occupancy == 0 {
+                            if one_forward.rank() == 7 {
+                                for piece in
+                                    [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight]
+                                {
                                     moves.push(Move::new(
                                         from,
-                                        two_forward,
-                                        MoveKind::DoublePawnPush,
+                                        one_forward,
+                                        MoveKind::Promotion(piece),
                                     ));
+                                }
+                            } else {
+                                moves.push(Move::new(from, one_forward, MoveKind::Quiet));
+
+                                if rank == 1 {
+                                    let two_forward = Square::from_rf(rank + 2, from.file());
+                                    if two_forward.to_bb() & all_occupancy == 0 {
+                                        moves.push(Move::new(
+                                            from,
+                                            two_forward,
+                                            MoveKind::DoublePawnPush,
+                                        ));
+                                    }
                                 }
                             }
                         }
                     }
                 }
                 Color::Black => {
-                    if rank > 0 {
+                    if !matches!(gen_type, GenType::Captures) && rank > 0 {
                         let one_forward = Square::from_rf(rank - 1, from.file());
                         if one_forward.to_bb() & all_occupancy == 0 {
                             if one_forward.rank() == 0 {
@@ -254,23 +299,25 @@ impl Board {
                 }
             }
 
-            let mut targets = attacks.pawn[us.index()][from.index()];
-            while targets != 0 {
-                let to = pop_lsb(&mut targets);
+            if !matches!(gen_type, GenType::Quiets) {
+                let mut targets = attacks.pawn[us.index()][from.index()];
+                while targets != 0 {
+                    let to = pop_lsb(&mut targets);
 
-                if to.to_bb() & their_occupancy != 0 {
-                    if self.piece_on(to) == Some((them, Piece::King)) {
-                        continue;
-                    }
-                    if is_promotion_square(us, to) {
-                        for piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
-                            moves.push(Move::new(from, to, MoveKind::PromotionCapture(piece)));
+                    if to.to_bb() & their_occupancy != 0 {
+                        if self.piece_on(to) == Some((them, Piece::King)) {
+                            continue;
                         }
-                    } else {
-                        moves.push(Move::new(from, to, MoveKind::Capture));
+                        if is_promotion_square(us, to) {
+                            for piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
+                                moves.push(Move::new(from, to, MoveKind::PromotionCapture(piece)));
+                            }
+                        } else {
+                            moves.push(Move::new(from, to, MoveKind::Capture));
+                        }
+                    } else if self.en_passant == Some(to) {
+                        moves.push(Move::new(from, to, MoveKind::EnPassant));
                     }
-                } else if self.en_passant == Some(to) {
-                    moves.push(Move::new(from, to, MoveKind::EnPassant));
                 }
             }
         }
@@ -278,19 +325,24 @@ impl Board {
         moves
     }
 
-    pub fn generate_bishop_moves(&self) -> Vec<Move> {
-        self.generate_slider_moves(Piece::Bishop, bishop_attacks)
+    pub fn generate_bishop_moves(&self, gen_type: GenType) -> Vec<Move> {
+        self.generate_slider_moves(Piece::Bishop, bishop_attacks, gen_type)
     }
 
-    pub fn generate_rook_moves(&self) -> Vec<Move> {
-        self.generate_slider_moves(Piece::Rook, rook_attacks)
+    pub fn generate_rook_moves(&self, gen_type: GenType) -> Vec<Move> {
+        self.generate_slider_moves(Piece::Rook, rook_attacks, gen_type)
     }
 
-    pub fn generate_queen_moves(&self) -> Vec<Move> {
-        self.generate_slider_moves(Piece::Queen, queen_attacks)
+    pub fn generate_queen_moves(&self, gen_type: GenType) -> Vec<Move> {
+        self.generate_slider_moves(Piece::Queen, queen_attacks, gen_type)
     }
 
-    fn generate_slider_moves(&self, piece: Piece, attack_fn: fn(Square, u64) -> u64) -> Vec<Move> {
+    fn generate_slider_moves(
+        &self,
+        piece: Piece,
+        attack_fn: fn(Square, u64) -> u64,
+        gen_type: GenType,
+    ) -> Vec<Move> {
         let us = self.side_to_move;
         let our_occupancy = self.occupancy(us);
         let their_occupancy = self.occupancy(us.opposite());
@@ -302,6 +354,12 @@ impl Board {
         while pieces != 0 {
             let from = pop_lsb(&mut pieces);
             let mut targets = attack_fn(from, all_occupancy) & !our_occupancy;
+
+            match gen_type {
+                GenType::Captures => targets &= their_occupancy,
+                GenType::Quiets => targets &= !their_occupancy,
+                GenType::All => {}
+            }
 
             while targets != 0 {
                 let to = pop_lsb(&mut targets);
@@ -349,7 +407,7 @@ mod tests {
     #[test]
     fn starting_position_has_four_knight_moves() {
         let board = Board::starting_position();
-        let moves = board.generate_knight_moves();
+        let moves = board.generate_knight_moves(GenType::All);
 
         assert_eq!(moves.len(), 4);
         assert!(moves.contains(&Move::new(
@@ -377,7 +435,7 @@ mod tests {
     #[test]
     fn knight_move_generation_marks_captures() {
         let board = Board::from_fen("8/8/8/8/8/2p5/8/1N6 w - - 0 1").unwrap();
-        let moves = board.generate_knight_moves();
+        let moves = board.generate_knight_moves(GenType::All);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(0, 1),
@@ -399,7 +457,7 @@ mod tests {
     #[test]
     fn king_move_generation_respects_friendly_blockers() {
         let board = Board::from_fen("8/8/8/8/3K4/3P4/8/8 w - - 0 1").unwrap();
-        let moves = board.generate_king_moves();
+        let moves = board.generate_king_moves(GenType::All);
 
         assert_eq!(moves.len(), 7);
         assert!(!moves.contains(&Move::new(
@@ -417,7 +475,7 @@ mod tests {
     #[test]
     fn king_move_generation_marks_captures() {
         let board = Board::from_fen("8/8/8/8/3Kp3/8/8/8 w - - 0 1").unwrap();
-        let moves = board.generate_king_moves();
+        let moves = board.generate_king_moves(GenType::All);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(3, 3),
@@ -434,7 +492,7 @@ mod tests {
     #[test]
     fn starting_position_has_sixteen_pawn_moves() {
         let board = Board::starting_position();
-        let moves = board.generate_pawn_moves();
+        let moves = board.generate_pawn_moves(GenType::All);
 
         assert_eq!(moves.len(), 16);
         assert!(moves.contains(&Move::new(
@@ -452,7 +510,7 @@ mod tests {
     #[test]
     fn pawn_move_generation_handles_captures_and_en_passant() {
         let board = Board::from_fen("8/8/8/3pP3/8/8/8/8 w - d6 0 1").unwrap();
-        let moves = board.generate_pawn_moves();
+        let moves = board.generate_pawn_moves(GenType::All);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(4, 4),
@@ -469,7 +527,7 @@ mod tests {
     #[test]
     fn pawn_move_generation_handles_promotions() {
         let board = Board::from_fen("1r6/P7/8/8/8/8/8/8 w - - 0 1").unwrap();
-        let moves = board.generate_pawn_moves();
+        let moves = board.generate_pawn_moves(GenType::All);
 
         for piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
             assert!(moves.contains(&Move::new(
@@ -486,18 +544,41 @@ mod tests {
     }
 
     #[test]
+    fn pawn_captures_and_quiets_split_promotions() {
+        let board = Board::from_fen("1r6/P7/8/8/8/8/8/8 w - - 0 1").unwrap();
+        let captures = board.generate_pawn_moves(GenType::Captures);
+        let quiets = board.generate_pawn_moves(GenType::Quiets);
+
+        assert_eq!(captures.len(), 4);
+        assert_eq!(quiets.len(), 4);
+
+        for piece in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
+            assert!(captures.contains(&Move::new(
+                Square::from_rf(6, 0),
+                Square::from_rf(7, 1),
+                MoveKind::PromotionCapture(piece)
+            )));
+            assert!(quiets.contains(&Move::new(
+                Square::from_rf(6, 0),
+                Square::from_rf(7, 0),
+                MoveKind::Promotion(piece)
+            )));
+        }
+    }
+
+    #[test]
     fn starting_position_has_no_bishop_rook_or_queen_moves() {
         let board = Board::starting_position();
 
-        assert_eq!(board.generate_bishop_moves().len(), 0);
-        assert_eq!(board.generate_rook_moves().len(), 0);
-        assert_eq!(board.generate_queen_moves().len(), 0);
+        assert_eq!(board.generate_bishop_moves(GenType::All).len(), 0);
+        assert_eq!(board.generate_rook_moves(GenType::All).len(), 0);
+        assert_eq!(board.generate_queen_moves(GenType::All).len(), 0);
     }
 
     #[test]
     fn bishop_move_generation_handles_quiets_and_captures() {
         let board = Board::from_fen("8/8/5p2/8/3B4/8/1P6/8 w - - 0 1").unwrap();
-        let moves = board.generate_bishop_moves();
+        let moves = board.generate_bishop_moves(GenType::All);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(3, 3),
@@ -517,9 +598,29 @@ mod tests {
     }
 
     #[test]
+    fn bishop_captures_and_quiets_are_filtered() {
+        let board = Board::from_fen("8/8/5p2/8/3B4/8/1P6/8 w - - 0 1").unwrap();
+        let captures = board.generate_bishop_moves(GenType::Captures);
+        let quiets = board.generate_bishop_moves(GenType::Quiets);
+
+        assert_eq!(captures.len(), 1);
+        assert_eq!(quiets.len(), 8);
+        assert!(captures.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(5, 5),
+            MoveKind::Capture
+        )));
+        assert!(quiets.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(4, 4),
+            MoveKind::Quiet
+        )));
+    }
+
+    #[test]
     fn rook_move_generation_handles_quiets_and_captures() {
         let board = Board::from_fen("8/8/3p4/8/3R1P2/8/8/8 w - - 0 1").unwrap();
-        let moves = board.generate_rook_moves();
+        let moves = board.generate_rook_moves(GenType::All);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(3, 3),
@@ -539,9 +640,29 @@ mod tests {
     }
 
     #[test]
+    fn rook_captures_and_quiets_are_filtered() {
+        let board = Board::from_fen("8/8/3p4/8/3R1P2/8/8/8 w - - 0 1").unwrap();
+        let captures = board.generate_rook_moves(GenType::Captures);
+        let quiets = board.generate_rook_moves(GenType::Quiets);
+
+        assert_eq!(captures.len(), 1);
+        assert_eq!(quiets.len(), 8);
+        assert!(captures.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(5, 3),
+            MoveKind::Capture
+        )));
+        assert!(quiets.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(4, 3),
+            MoveKind::Quiet
+        )));
+    }
+
+    #[test]
     fn queen_move_generation_combines_rook_and_bishop_patterns() {
         let board = Board::from_fen("8/8/8/2p5/3Q4/5P2/8/8 w - - 0 1").unwrap();
-        let moves = board.generate_queen_moves();
+        let moves = board.generate_queen_moves(GenType::All);
 
         assert!(moves.contains(&Move::new(
             Square::from_rf(3, 3),
@@ -556,6 +677,26 @@ mod tests {
         assert!(!moves.contains(&Move::new(
             Square::from_rf(3, 3),
             Square::from_rf(2, 5),
+            MoveKind::Quiet
+        )));
+    }
+
+    #[test]
+    fn queen_captures_and_quiets_are_filtered() {
+        let board = Board::from_fen("8/8/8/2p5/3Q4/5P2/8/8 w - - 0 1").unwrap();
+        let captures = board.generate_queen_moves(GenType::Captures);
+        let quiets = board.generate_queen_moves(GenType::Quiets);
+
+        assert_eq!(captures.len(), 1);
+        assert_eq!(quiets.len(), 24);
+        assert!(captures.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(4, 2),
+            MoveKind::Capture
+        )));
+        assert!(quiets.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(4, 3),
             MoveKind::Quiet
         )));
     }
@@ -660,6 +801,114 @@ mod tests {
         assert!(!moves.contains(&Move::new(
             Square::from_rf(0, 4),
             Square::from_rf(1, 4),
+            MoveKind::Quiet
+        )));
+    }
+
+    #[test]
+    fn knight_captures() {
+        let mut board = Board::from_fen("4k3/8/1b6/4p3/2N5/P3Q3/1n6/4K3 w - - 0 1").unwrap();
+        let moves = board.generate_knight_moves(GenType::Captures);
+
+        assert_eq!(moves.len(), 3);
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 2),
+            Square::from_rf(1, 1),
+            MoveKind::Capture
+        )));
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 2),
+            Square::from_rf(5, 1),
+            MoveKind::Capture
+        )));
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 2),
+            Square::from_rf(4, 4),
+            MoveKind::Capture
+        )));
+    }
+
+    #[test]
+    fn knight_quiets() {
+        let mut board = Board::from_fen("4k3/8/1b6/4p3/2N5/P3Q3/1n6/4K3 w - - 0 1").unwrap();
+        let moves = board.generate_knight_moves(GenType::Quiets);
+
+        assert_eq!(moves.len(), 3);
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 2),
+            Square::from_rf(4, 0),
+            MoveKind::Quiet
+        )));
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 2),
+            Square::from_rf(1, 3),
+            MoveKind::Quiet
+        )));
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 2),
+            Square::from_rf(5, 3),
+            MoveKind::Quiet
+        )));
+    }
+
+    #[test]
+    fn king_captures() {
+        let mut board = Board::from_fen("8/8/2k5/3pp3/3K4/3Pn3/8/8 w - - 0 1").unwrap();
+        let moves = board.generate_king_moves(GenType::Captures);
+
+        assert_eq!(moves.len(), 3);
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(4, 3),
+            MoveKind::Capture
+        )));
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(4, 4),
+            MoveKind::Capture
+        )));
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(2, 4),
+            MoveKind::Capture
+        )));
+    }
+
+    #[test]
+    fn king_quiets() {
+        let mut board = Board::from_fen("8/8/2k5/3pp3/3K4/3Pn3/8/8 w - - 0 1").unwrap();
+        let moves = board.generate_king_moves(GenType::Quiets);
+
+        assert_eq!(moves.len(), 4);
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(3, 2),
+            MoveKind::Quiet
+        )));
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(3, 4),
+            MoveKind::Quiet
+        )));
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(4, 2),
+            MoveKind::Quiet
+        )));
+
+        assert!(moves.contains(&Move::new(
+            Square::from_rf(3, 3),
+            Square::from_rf(2, 2),
             MoveKind::Quiet
         )));
     }

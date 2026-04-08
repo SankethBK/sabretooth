@@ -42,10 +42,10 @@ impl MovePicker {
             }
 
             Stage::Captures => {
-                let moves = board.generate_pseudo_legal_moves();
+                let moves = board.generate_pseudo_legal_captures();
 
                 for mv in moves {
-                    if mv.is_capture() && Some(mv) != self.pv_move {
+                    if Some(mv) != self.pv_move {
                         let score = score_move(board, mv, None, state, ply);
                         self.buffer.push((score, mv));
                     }
@@ -55,10 +55,10 @@ impl MovePicker {
             }
 
             Stage::Quiets => {
-                let moves = board.generate_pseudo_legal_moves();
+                let moves = board.generate_pseudo_legal_quiets();
 
                 for mv in moves {
-                    if !mv.is_capture() && Some(mv) != self.pv_move {
+                    if Some(mv) != self.pv_move {
                         let score = score_move(board, mv, None, state, ply);
                         self.buffer.push((score, mv));
                     }
