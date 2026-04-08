@@ -4,52 +4,104 @@ use crate::types::{Move, Piece};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MovePicker {
-    moves: Vec<(i32, Move)>,
     next_index: usize,
+    buffer: Vec<(i32, Move)>,
+    pv_move: Option<Move>,
+    stage: Stage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    Pv,
+    Captures,
+    Quiets,
+    Done,
 }
 
 impl MovePicker {
-    pub fn new(board: &mut Board, pv_hint: Option<Move>, state: &SearchState, ply: usize) -> Self {
-        let moves = board.generate_pseudo_legal_moves();
-
-        let scored_moves = moves
-            .into_iter()
-            .map(|mv| (score_move(board, mv, pv_hint, state, ply), mv))
-            .collect();
-
+    pub fn new(pv_hint: Option<Move>) -> Self {
         Self {
-            moves: scored_moves,
             next_index: 0,
+            buffer: Vec::new(),
+            pv_move: pv_hint,
+            stage: Stage::Pv,
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.moves.is_empty()
-    }
-}
+    fn fill_next_stage(&mut self, board: &Board, state: &SearchState, ply: usize) {
+        self.buffer.clear();
+        self.next_index = 0;
 
-impl Iterator for MovePicker {
-    type Item = Move;
+        match self.stage {
+            Stage::Pv => {
+                self.stage = Stage::Captures;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.next_index >= self.moves.len() {
-            return None;
-        }
-
-        let mut best_idx = self.next_index;
-
-        for i in (self.next_index + 1)..self.moves.len() {
-            if self.moves[i].0 > self.moves[best_idx].0 {
-                best_idx = i;
+                if let Some(mv) = self.pv_move {
+                    self.buffer.push((1_000_000, mv));
+                }
             }
+
+            Stage::Captures => {
+                let moves = board.generate_pseudo_legal_moves();
+
+                for mv in moves {
+                    if mv.is_capture() && Some(mv) != self.pv_move {
+                        let score = score_move(board, mv, None, state, ply);
+                        self.buffer.push((score, mv));
+                    }
+                }
+
+                self.stage = Stage::Quiets;
+            }
+
+            Stage::Quiets => {
+                let moves = board.generate_pseudo_legal_moves();
+
+                for mv in moves {
+                    if !mv.is_capture() && Some(mv) != self.pv_move {
+                        let score = score_move(board, mv, None, state, ply);
+                        self.buffer.push((score, mv));
+                    }
+                }
+
+                self.stage = Stage::Done;
+            }
+
+            Stage::Done => {}
         }
+    }
 
-        self.moves.swap(self.next_index, best_idx);
+    pub fn next_move(
+        &mut self,
+        board: &mut Board,
+        state: &SearchState,
+        ply: usize,
+    ) -> Option<Move> {
+        loop {
+            if let Some(mv) = self.buffer.get(self.next_index).copied() {
+                self.next_index += 1;
+                return Some(mv.1);
+            }
 
-        let mv = self.moves[self.next_index].1;
-        self.next_index += 1;
+            if self.stage == Stage::Done {
+                return None;
+            }
 
-        Some(mv)
+            self.fill_next_stage(board, state, ply);
+        }
+    }
+
+    pub fn is_empty(&mut self, board: &mut Board, state: &SearchState, ply: usize) -> bool {
+        self.next_move(board, state, ply).is_none()
+    }
+
+    // Helper method to get all moves at once (for testing)
+    pub fn generate_all_moves(&mut self, board: &mut Board) -> Vec<Move> {
+        let mut moves = Vec::new();
+        while let Some(mv) = self.next_move(board, &SearchState::new(), 0) {
+            moves.push(mv);
+        }
+        moves
     }
 }
 
@@ -112,28 +164,27 @@ mod tests {
         );
         let state = SearchState::new();
 
-        let mut picker = MovePicker::new(&mut board, Some(pv_hint), &state, 0);
+        let mut picker = MovePicker::new(Some(pv_hint));
 
-        assert_eq!(picker.next(), Some(pv_hint));
+        assert_eq!(picker.next_move(&mut board, &state, 0), Some(pv_hint));
     }
 
     #[test]
     fn move_picker_iterates_all_legal_moves() {
         let mut board = Board::starting_position();
-        let state = SearchState::new();
-        let picker = MovePicker::new(&mut board, None, &state, 0);
+        let mut picker = MovePicker::new(None);
 
-        assert_eq!(picker.count(), 20);
+        assert_eq!(picker.generate_all_moves(&mut board).len(), 20);
     }
 
     #[test]
     fn move_picker_orders_captures_before_quiets_without_pv_hint() {
         let mut board = Board::from_fen("4k3/8/8/3p4/8/2N5/8/4K3 w - - 0 1").unwrap();
         let state = SearchState::new();
-        let mut picker = MovePicker::new(&mut board, None, &state, 0);
+        let mut picker = MovePicker::new(None);
 
         assert_eq!(
-            picker.next(),
+            picker.next_move(&mut board, &state, 0),
             Some(Move::new(
                 Square::from_rf(2, 2),
                 Square::from_rf(4, 3),

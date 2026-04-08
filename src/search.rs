@@ -151,7 +151,7 @@ pub fn search_with_pv_hint(
 ) -> (SearchResult, bool) {
     let mut nodes = 1;
     let mut pv = PrincipalVariation::new();
-    let move_picker = MovePicker::new(board, pv_hint.first().copied(), state, 0);
+    let mut move_picker = MovePicker::new(pv_hint.first().copied());
     let mut timed_out = false;
 
     let mut best_move = None;
@@ -163,7 +163,7 @@ pub fn search_with_pv_hint(
 
     let mut legal_moves: u32 = 0;
 
-    for mv in move_picker {
+    while let Some(mv) = move_picker.next_move(board, state, 0) {
         board.make_move(mv);
 
         if board.is_in_check(us) {
@@ -346,13 +346,8 @@ fn negamax(
         pv.clear_at(ply as usize);
         return side_to_move_eval(board);
     }
-    let move_picker = MovePicker::new(
-        board,
-        pv_hint.get(ply as usize).copied(),
-        state,
-        ply as usize,
-    );
-    if move_picker.is_empty() {
+    let mut move_picker = MovePicker::new(pv_hint.get(ply as usize).copied());
+    if move_picker.is_empty(board, state, ply as usize) {
         pv.clear_at(ply as usize);
         return terminal_score(in_check, ply);
     }
@@ -360,7 +355,7 @@ fn negamax(
     let mut best_score = i32::MIN;
     let mut legal_moves: u32 = 0;
 
-    for mv in move_picker {
+    while let Some(mv) = move_picker.next_move(board, state, 0) {
         board.make_move(mv);
         if board.is_in_check(us) {
             board.unmake_move();
