@@ -37,9 +37,11 @@ impl MovePicker {
         match self.stage {
             Stage::Pv => {
                 self.stage = Stage::Captures;
-
                 if let Some(mv) = self.pv_move {
-                    self.buffer.push((1_000_000, mv));
+                    if board.piece_on(mv.from).map(|(c, _)| c) == Some(board.side_to_move()) {
+                        self.buffer.push((1_000_000, mv));
+                    }
+                    // silently skip if invalid — falls through to captures
                 }
             }
 

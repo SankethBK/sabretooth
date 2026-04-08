@@ -1,6 +1,7 @@
 use crate::attacks::{attack_table, bishop_attacks, queen_attacks, rook_attacks};
 use crate::bitboard::pop_lsb;
 use crate::types::{CastlingRights, Color, Move, MoveKind, Piece, Square};
+use std::fmt;
 
 const PAWN_PST: [i32; 64] = [
     0, 0, 0, 0, 0, 0, 0, 0, 5, 10, 10, -20, -20, 10, 10, 5, 5, -5, -10, 0, 0, -10, -5, 5, 0, 0, 0,
@@ -648,6 +649,13 @@ impl Board {
         }
 
         score
+    }
+}
+
+impl fmt::Display for Board {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // assuming you already have a function that returns the pretty board string
+        write!(f, "{}", self.pretty_string())
     }
 }
 
