@@ -1,5 +1,5 @@
 use crate::attacks::{attack_table, bishop_attacks, queen_attacks, rook_attacks};
-use crate::bitboard::pop_lsb;
+use crate::bitboard::{pop_lsb, pretty_print_bitboard};
 use crate::types::{CastlingRights, Color, Move, MoveKind, Piece, Square};
 use std::fmt;
 
@@ -158,6 +158,25 @@ impl Board {
     pub fn starting_position() -> Self {
         Self::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
             .expect("starting position FEN must be valid")
+    }
+
+    pub fn print_all_bitboards(&self) -> String {
+        let mut out: String = String::new();
+        for color in [Color::White, Color::Black] {
+            for piece in [
+                Piece::Pawn,
+                Piece::Knight,
+                Piece::Bishop,
+                Piece::Rook,
+                Piece::Queen,
+                Piece::King,
+            ] {
+                out.push_str(&format!("Color: {:?} Piece: {:?}:\n", color, piece));
+                out.push_str(&pretty_print_bitboard(self.piece_bb(color, piece)));
+                out.push_str("\n");
+            }
+        }
+        out
     }
 
     pub fn piece_bb(&self, color: Color, piece: Piece) -> u64 {
@@ -649,6 +668,108 @@ impl Board {
         }
 
         score
+    }
+
+    pub fn is_pseudo_legal(&self, mv: Move) -> bool {
+        let us = self.side_to_move;
+        let them = us.opposite();
+
+        // 1. Must have our piece on from square
+        let Some((color, piece)) = self.piece_on(mv.from) else {
+            return false;
+        };
+        if color != us {
+            return false;
+        }
+
+        // 2. Cannot capture our own piece
+        if let Some((cap_color, _)) = self.piece_on(mv.to) {
+            if cap_color == us {
+                return false;
+            }
+        }
+
+        // 3. Move kind must match board state
+        match mv.kind {
+            MoveKind::Quiet | MoveKind::DoublePawnPush => {
+                // destination must be empty
+                if self.piece_on(mv.to).is_some() {
+                    return false;
+                }
+            }
+            MoveKind::Capture | MoveKind::PromotionCapture(_) => {
+                // destination must have enemy piece
+                if self.piece_on(mv.to).map(|(c, _)| c) != Some(them) {
+                    return false;
+                }
+            }
+            MoveKind::EnPassant => {
+                if self.en_passant != Some(mv.to) {
+                    return false;
+                }
+            }
+            MoveKind::CastleKingside | MoveKind::CastleQueenside => {
+                if piece != Piece::King {
+                    return false;
+                }
+            }
+            MoveKind::Promotion(_) => {
+                if self.piece_on(mv.to).is_some() {
+                    return false;
+                }
+            }
+        }
+
+        // 4. Piece-specific movement validation
+        match piece {
+            Piece::Pawn => self.is_pseudo_legal_pawn(mv, us),
+            Piece::Knight => {
+                let attacks = attack_table();
+                attacks.knight[mv.from.index()] & mv.to.to_bb() != 0
+            }
+            Piece::Bishop => bishop_attacks(mv.from, self.all_occupancy()) & mv.to.to_bb() != 0,
+            Piece::Rook => rook_attacks(mv.from, self.all_occupancy()) & mv.to.to_bb() != 0,
+            Piece::Queen => queen_attacks(mv.from, self.all_occupancy()) & mv.to.to_bb() != 0,
+            Piece::King => {
+                let attacks = attack_table();
+                // normal king move
+                attacks.king[mv.from.index()] & mv.to.to_bb() != 0
+            // castling handled separately below
+            || matches!(mv.kind, MoveKind::CastleKingside | MoveKind::CastleQueenside)
+            }
+        }
+    }
+
+    fn is_pseudo_legal_pawn(&self, mv: Move, us: Color) -> bool {
+        let from_rank = mv.from.rank();
+        let to_rank = mv.to.rank();
+        let from_file = mv.from.file();
+        let to_file = mv.to.file();
+
+        match us {
+            Color::White => match mv.kind {
+                MoveKind::Quiet | MoveKind::Promotion(_) => {
+                    to_rank == from_rank + 1 && to_file == from_file
+                }
+                MoveKind::DoublePawnPush => from_rank == 1 && to_rank == 3 && to_file == from_file,
+                MoveKind::Capture | MoveKind::PromotionCapture(_) => {
+                    to_rank == from_rank + 1 && to_file.abs_diff(from_file) == 1
+                }
+                MoveKind::EnPassant => to_rank == from_rank + 1 && to_file.abs_diff(from_file) == 1,
+                _ => false,
+            },
+            Color::Black => match mv.kind {
+                MoveKind::Quiet | MoveKind::Promotion(_) => {
+                    to_rank == from_rank - 1 && to_file == from_file
+                }
+                MoveKind::DoublePawnPush => from_rank == 6 && to_rank == 4 && to_file == from_file,
+                MoveKind::Capture | MoveKind::PromotionCapture(_) => {
+                    to_rank == from_rank - 1 && to_file.abs_diff(from_file) == 1
+                }
+                MoveKind::EnPassant => to_rank == from_rank - 1 && to_file.abs_diff(from_file) == 1,
+                _ => false,
+            },
+        }
     }
 }
 
