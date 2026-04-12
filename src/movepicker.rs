@@ -129,7 +129,16 @@ fn score_move(
     }
 
     if mv.is_capture() {
-        return 100_000 + capture_score(board, mv);
+        let attacker = board.piece_on(mv.from).unwrap().1;
+        let victim = captured_piece(board, mv).unwrap();
+
+        let mvv_lva = victim.score() * 10 - attacker.score();
+
+        if victim.score() >= attacker.score() {
+            return 120_000 + mvv_lva; // good capture
+        } else {
+            return 70_000 + mvv_lva; // bad capture (below killers!)
+        }
     }
 
     let killers = state.killers(ply);
