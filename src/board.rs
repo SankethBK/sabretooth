@@ -730,13 +730,12 @@ impl Board {
             Piece::Bishop => bishop_attacks(mv.from, self.all_occupancy()) & mv.to.to_bb() != 0,
             Piece::Rook => rook_attacks(mv.from, self.all_occupancy()) & mv.to.to_bb() != 0,
             Piece::Queen => queen_attacks(mv.from, self.all_occupancy()) & mv.to.to_bb() != 0,
-            Piece::King => {
-                let attacks = attack_table();
-                // normal king move
-                attacks.king[mv.from.index()] & mv.to.to_bb() != 0
-            // castling handled separately below
-            || matches!(mv.kind, MoveKind::CastleKingside | MoveKind::CastleQueenside)
-            }
+            Piece::King => match mv.kind {
+                MoveKind::CastleKingside | MoveKind::CastleQueenside => {
+                    self.generate_castling_moves().contains(&mv)
+                }
+                _ => attack_table().king[mv.from.index()] & mv.to.to_bb() != 0,
+            },
         }
     }
 
