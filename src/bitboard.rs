@@ -16,18 +16,23 @@ pub fn pop_lsb(bb: &mut Bitboard) -> Square {
     sq
 }
 
-pub fn pretty_print(bb: Bitboard) {
+pub fn pretty_print_bitboard(bb: Bitboard) -> String {
+    let mut out = String::new();
+
     for rank in (0..8).rev() {
         for file in 0..8 {
             let sq = rank * 8 + file;
             if bb & (1u64 << sq) != 0 {
-                print!("1 ");
+                out.push_str("1 ");
             } else {
-                print!(". ");
+                out.push_str(". ");
             }
         }
-        println!("  {}", rank + 1);
+        out.push_str(&format!("  {}\n", rank + 1));
     }
-    println!("a b c d e f g h");
-    println!("0x{:016X}\n", bb);
+
+    out.push_str("a b c d e f g h\n");
+    out.push_str(&format!("0x{:016X}\n", bb));
+
+    out
 }

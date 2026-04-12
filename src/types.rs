@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Color {
     White,
@@ -84,7 +86,7 @@ pub enum MoveKind {
     PromotionCapture(Piece),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Move {
     pub from: Square,
     pub to: Square,
@@ -115,6 +117,47 @@ impl Move {
             self.kind,
             MoveKind::CastleKingside | MoveKind::CastleQueenside
         )
+    }
+}
+
+impl fmt::Display for Move {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut s = String::new();
+
+        // from square
+        let from_file = (b'a' + self.from.file() as u8) as char;
+        let from_rank = (b'1' + self.from.rank() as u8) as char;
+
+        // to square
+        let to_file = (b'a' + self.to.file() as u8) as char;
+        let to_rank = (b'1' + self.to.rank() as u8) as char;
+
+        s.push(from_file);
+        s.push(from_rank);
+        s.push(to_file);
+        s.push(to_rank);
+
+        // promotions
+        match self.kind {
+            MoveKind::Promotion(piece) | MoveKind::PromotionCapture(piece) => {
+                s.push(match piece {
+                    Piece::Knight => 'n',
+                    Piece::Bishop => 'b',
+                    Piece::Rook => 'r',
+                    Piece::Queen => 'q',
+                    _ => unreachable!(),
+                });
+            }
+            _ => {}
+        }
+
+        write!(f, "{}", s)
+    }
+}
+
+impl fmt::Debug for Move {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
     }
 }
 

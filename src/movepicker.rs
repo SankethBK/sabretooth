@@ -4,43 +4,116 @@ use crate::types::{Move, Piece};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MovePicker {
-    moves: Vec<Move>,
     next_index: usize,
+    buffer: Vec<(i32, Move)>,
+    move_buffer: Vec<Move>,
+    pv_move: Option<Move>,
+    stage: Stage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    Pv,
+    Captures,
+    Quiets,
+    Done,
 }
 
 impl MovePicker {
-    pub fn new(
-        board: &mut Board,
-        pv_hint: Option<Move>,
-        state: &SearchState,
-        ply: usize,
-    ) -> Self {
-        let mut moves = board.generate_legal_moves();
-        let mut scored_moves = moves
-            .drain(..)
-            .map(|mv| (score_move(board, mv, pv_hint, state, ply), mv))
-            .collect::<Vec<_>>();
-        scored_moves.sort_by(|a, b| b.0.cmp(&a.0));
-        let moves = scored_moves.into_iter().map(|(_, mv)| mv).collect();
-
+    pub fn new(pv_hint: Option<Move>) -> Self {
         Self {
-            moves,
             next_index: 0,
+            buffer: Vec::with_capacity(64),
+            move_buffer: Vec::with_capacity(64),
+            pv_move: pv_hint,
+            stage: Stage::Pv,
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.moves.is_empty()
+    fn fill_next_stage(&mut self, board: &Board, state: &SearchState, ply: usize) {
+        self.buffer.clear();
+        self.next_index = 0;
+
+        match self.stage {
+            Stage::Pv => {
+                self.stage = Stage::Captures;
+                if let Some(mv) = self.pv_move {
+                    if board.is_pseudo_legal(mv) {
+                        let score = score_move(board, mv, Some(mv), state, ply);
+                        self.buffer.push((score, mv));
+                    }
+                }
+            }
+
+            Stage::Captures => {
+                self.move_buffer.clear();
+                board.generate_pseudo_legal_captures_into(&mut self.move_buffer);
+
+                for &mv in &self.move_buffer {
+                    if Some(mv) != self.pv_move {
+                        let score = score_move(board, mv, None, state, ply);
+                        self.buffer.push((score, mv));
+                    }
+                }
+
+                self.buffer.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+
+                self.stage = Stage::Quiets;
+            }
+
+            Stage::Quiets => {
+                self.move_buffer.clear();
+                board.generate_pseudo_legal_quiets_into(&mut self.move_buffer);
+
+                for &mv in &self.move_buffer {
+                    if Some(mv) != self.pv_move {
+                        let score = score_move(board, mv, None, state, ply);
+                        self.buffer.push((score, mv));
+                    }
+                }
+                self.buffer.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+
+                self.stage = Stage::Done;
+            }
+
+            Stage::Done => {}
+        }
     }
-}
 
-impl Iterator for MovePicker {
-    type Item = Move;
+    pub fn next_move(
+        &mut self,
+        board: &mut Board,
+        state: &SearchState,
+        ply: usize,
+    ) -> Option<Move> {
+        loop {
+            if let Some(mv) = self.buffer.get(self.next_index).copied() {
+                self.next_index += 1;
+                return Some(mv.1);
+            }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        let mv = self.moves.get(self.next_index).copied()?;
-        self.next_index += 1;
-        Some(mv)
+            if self.stage == Stage::Done {
+                return None;
+            }
+
+            self.fill_next_stage(board, state, ply);
+        }
+    }
+
+    pub fn is_empty(&mut self, board: &mut Board, state: &SearchState, ply: usize) -> bool {
+        if self.buffer.is_empty() && self.stage != Stage::Done {
+            self.fill_next_stage(board, state, ply);
+        }
+        self.buffer.is_empty() && self.stage == Stage::Done
+    }
+
+    // Helper method to get all moves at once (for testing)
+    pub fn generate_all_moves(&mut self, board: &mut Board) -> Vec<Move> {
+        let mut moves = Vec::new();
+        while let Some(mv) = self.next_move(board, &SearchState::new(), 0) {
+            moves.push(mv);
+        }
+        moves
     }
 }
 
@@ -56,7 +129,16 @@ fn score_move(
     }
 
     if mv.is_capture() {
-        return 100_000 + capture_score(board, mv);
+        let attacker = board.piece_on(mv.from).unwrap().1;
+        let victim = captured_piece(board, mv).unwrap();
+
+        let mvv_lva = victim.score() * 10 - attacker.score();
+
+        if victim.score() >= attacker.score() {
+            return 120_000 + mvv_lva; // good capture
+        } else {
+            return 70_000 + mvv_lva; // bad capture (below killers!)
+        }
     }
 
     let killers = state.killers(ply);
@@ -103,28 +185,27 @@ mod tests {
         );
         let state = SearchState::new();
 
-        let mut picker = MovePicker::new(&mut board, Some(pv_hint), &state, 0);
+        let mut picker = MovePicker::new(Some(pv_hint));
 
-        assert_eq!(picker.next(), Some(pv_hint));
+        assert_eq!(picker.next_move(&mut board, &state, 0), Some(pv_hint));
     }
 
     #[test]
     fn move_picker_iterates_all_legal_moves() {
         let mut board = Board::starting_position();
-        let state = SearchState::new();
-        let picker = MovePicker::new(&mut board, None, &state, 0);
+        let mut picker = MovePicker::new(None);
 
-        assert_eq!(picker.count(), 20);
+        assert_eq!(picker.generate_all_moves(&mut board).len(), 20);
     }
 
     #[test]
     fn move_picker_orders_captures_before_quiets_without_pv_hint() {
         let mut board = Board::from_fen("4k3/8/8/3p4/8/2N5/8/4K3 w - - 0 1").unwrap();
         let state = SearchState::new();
-        let mut picker = MovePicker::new(&mut board, None, &state, 0);
+        let mut picker = MovePicker::new(None);
 
         assert_eq!(
-            picker.next(),
+            picker.next_move(&mut board, &state, 0),
             Some(Move::new(
                 Square::from_rf(2, 2),
                 Square::from_rf(4, 3),
