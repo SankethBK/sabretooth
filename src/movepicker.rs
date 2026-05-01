@@ -152,16 +152,6 @@ fn score_move(
     state.history_score(mv)
 }
 
-fn capture_score(board: &Board, mv: Move) -> i32 {
-    let attacker = board
-        .piece_on(mv.from)
-        .map(|(_, piece)| piece)
-        .unwrap_or(Piece::Pawn);
-    let victim = captured_piece(board, mv).unwrap_or(Piece::Pawn);
-
-    victim.score() * 10 - attacker.score()
-}
-
 fn captured_piece(board: &Board, mv: Move) -> Option<Piece> {
     if matches!(mv.kind, crate::types::MoveKind::EnPassant) {
         return Some(Piece::Pawn);

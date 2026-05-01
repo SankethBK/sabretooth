@@ -750,7 +750,14 @@ impl Board {
                 MoveKind::Quiet | MoveKind::Promotion(_) => {
                     to_rank == from_rank + 1 && to_file == from_file
                 }
-                MoveKind::DoublePawnPush => from_rank == 1 && to_rank == 3 && to_file == from_file,
+                MoveKind::DoublePawnPush => {
+                    if !(from_rank == 1 && to_rank == 3 && to_file == from_file) {
+                        return false;
+                    }
+
+                    let intermediate = Square::from_rf(from_rank + 1, from_file);
+                    self.piece_on(intermediate).is_none() && self.piece_on(mv.to).is_none()
+                }
                 MoveKind::Capture | MoveKind::PromotionCapture(_) => {
                     to_rank == from_rank + 1 && to_file.abs_diff(from_file) == 1
                 }
@@ -761,7 +768,14 @@ impl Board {
                 MoveKind::Quiet | MoveKind::Promotion(_) => {
                     to_rank == from_rank - 1 && to_file == from_file
                 }
-                MoveKind::DoublePawnPush => from_rank == 6 && to_rank == 4 && to_file == from_file,
+                MoveKind::DoublePawnPush => {
+                    if !(from_rank == 6 && to_rank == 4 && to_file == from_file) {
+                        return false;
+                    }
+
+                    let intermediate = Square::from_rf(from_rank - 1, from_file);
+                    self.piece_on(intermediate).is_none() && self.piece_on(mv.to).is_none()
+                }
                 MoveKind::Capture | MoveKind::PromotionCapture(_) => {
                     to_rank == from_rank - 1 && to_file.abs_diff(from_file) == 1
                 }
