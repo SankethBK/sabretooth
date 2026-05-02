@@ -2,12 +2,17 @@ use std::sync::OnceLock;
 
 use crate::bitboard::Bitboard;
 use crate::types::{Color, Square};
+include!(concat!(env!("OUT_DIR"), "/generated_attacks.rs"));
 
 #[derive(Debug)]
 pub struct AttackTable {
     pub knight: [Bitboard; 64],
     pub king: [Bitboard; 64],
     pub pawn: [[Bitboard; 64]; 2],
+    rook_masks: &'static [Bitboard; 64],
+    bishop_masks: &'static [Bitboard; 64],
+    rook_tables: &'static [[Bitboard; 4096]; 64],
+    bishop_tables: &'static [[Bitboard; 512]; 64],
 }
 
 impl AttackTable {
@@ -16,6 +21,10 @@ impl AttackTable {
             knight: [0; 64],
             king: [0; 64],
             pawn: [[0; 64]; 2],
+            rook_masks: &ROOK_MASKS,
+            bishop_masks: &BISHOP_MASKS,
+            rook_tables: &ROOK_TABLE,
+            bishop_tables: &BISHOP_TABLE,
         };
 
         for sq in 0..64 {
@@ -84,11 +93,15 @@ pub fn compute_pawn_attacks(color: Color, square: Square) -> Bitboard {
 }
 
 pub fn rook_attacks(square: Square, occupancy: Bitboard) -> Bitboard {
-    ray_attacks(square, occupancy, &[(1, 0), (-1, 0), (0, 1), (0, -1)])
+    let table = attack_table();
+    let idx = magic_index(occupancy, table.rook_masks[square.index()], ROOK_MAGICS[square.index()], 64 - table.rook_masks[square.index()].count_ones());
+    table.rook_tables[square.index()][idx]
 }
 
 pub fn bishop_attacks(square: Square, occupancy: Bitboard) -> Bitboard {
-    ray_attacks(square, occupancy, &[(1, 1), (1, -1), (-1, 1), (-1, -1)])
+    let table = attack_table();
+    let idx = magic_index(occupancy, table.bishop_masks[square.index()], BISHOP_MAGICS[square.index()], 64 - table.bishop_masks[square.index()].count_ones());
+    table.bishop_tables[square.index()][idx]
 }
 
 pub fn queen_attacks(square: Square, occupancy: Bitboard) -> Bitboard {
@@ -110,29 +123,8 @@ fn compute_attacks_from_offsets(rank: i8, file: i8, offsets: &[(i8, i8)]) -> Bit
     attacks
 }
 
-fn ray_attacks(square: Square, occupancy: Bitboard, directions: &[(i8, i8)]) -> Bitboard {
-    let mut attacks = 0;
-    let start_rank = square.rank() as i8;
-    let start_file = square.file() as i8;
-
-    for &(dr, df) in directions {
-        let mut rank = start_rank + dr;
-        let mut file = start_file + df;
-
-        while (0..8).contains(&rank) && (0..8).contains(&file) {
-            let target = Square::from_rf(rank as u8, file as u8);
-            attacks |= target.to_bb();
-
-            if target.to_bb() & occupancy != 0 {
-                break;
-            }
-
-            rank += dr;
-            file += df;
-        }
-    }
-
-    attacks
+fn magic_index(occupancy: Bitboard, mask: Bitboard, magic: Bitboard, shift: u32) -> usize {
+    (((occupancy & mask).wrapping_mul(magic)) >> shift) as usize
 }
 
 #[cfg(test)]
