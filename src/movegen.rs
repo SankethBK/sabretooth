@@ -346,7 +346,20 @@ impl Board {
                             moves.push(Move::new(from, to, MoveKind::Capture));
                         }
                     } else if self.en_passant == Some(to) {
-                        moves.push(Move::new(from, to, MoveKind::EnPassant));
+                        let captured_square = match us {
+                            Color::White if to.rank() > 0 => {
+                                Some(Square::from_rf(to.rank() - 1, to.file()))
+                            }
+                            Color::Black if to.rank() < 7 => {
+                                Some(Square::from_rf(to.rank() + 1, to.file()))
+                            }
+                            _ => None,
+                        };
+                        if captured_square.and_then(|square| self.piece_on(square))
+                            == Some((them, Piece::Pawn))
+                        {
+                            moves.push(Move::new(from, to, MoveKind::EnPassant));
+                        }
                     }
                 }
             }

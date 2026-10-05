@@ -164,6 +164,14 @@ pub fn search_with_pv_hint(
     let mut legal_moves: u32 = 0;
 
     while let Some(mv) = move_picker.next_move(board, state, 0) {
+        debug_assert!(
+            board.is_pseudo_legal(mv),
+            "move picker produced pseudo-illegal root move {mv} ({:?}) for {:?}; from={:?}, to={:?}",
+            mv.kind,
+            board.side_to_move(),
+            board.piece_on(mv.from),
+            board.piece_on(mv.to),
+        );
         board.make_move(mv);
 
         if board.is_in_check(us) {
@@ -355,7 +363,15 @@ fn negamax(
     let mut best_score = i32::MIN;
     let mut legal_moves: u32 = 0;
 
-    while let Some(mv) = move_picker.next_move(board, state, 0) {
+    while let Some(mv) = move_picker.next_move(board, state, ply as usize) {
+        debug_assert!(
+            board.is_pseudo_legal(mv),
+            "move picker produced pseudo-illegal move {mv} ({:?}) at ply {ply} for {:?}; from={:?}, to={:?}",
+            mv.kind,
+            board.side_to_move(),
+            board.piece_on(mv.from),
+            board.piece_on(mv.to),
+        );
         board.make_move(mv);
         if board.is_in_check(us) {
             board.unmake_move();
@@ -589,11 +605,9 @@ mod tests {
         let lines = search_root_move_lines(&mut board, 2);
 
         assert!(!lines.is_empty());
-        assert!(
-            lines
-                .iter()
-                .all(|line| line.line.first().copied() == Some(line.mv))
-        );
+        assert!(lines
+            .iter()
+            .all(|line| line.line.first().copied() == Some(line.mv)));
     }
 
     #[test]

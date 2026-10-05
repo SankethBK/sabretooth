@@ -704,7 +704,19 @@ impl Board {
                 }
             }
             MoveKind::EnPassant => {
-                if self.en_passant != Some(mv.to) {
+                let captured_square = match us {
+                    Color::White if mv.to.rank() > 0 => {
+                        Some(Square::from_rf(mv.to.rank() - 1, mv.to.file()))
+                    }
+                    Color::Black if mv.to.rank() < 7 => {
+                        Some(Square::from_rf(mv.to.rank() + 1, mv.to.file()))
+                    }
+                    _ => None,
+                };
+                if self.en_passant != Some(mv.to)
+                    || captured_square.and_then(|square| self.piece_on(square))
+                        != Some((them, Piece::Pawn))
+                {
                     return false;
                 }
             }
@@ -748,7 +760,12 @@ impl Board {
         match us {
             Color::White => match mv.kind {
                 MoveKind::Quiet | MoveKind::Promotion(_) => {
-                    to_rank == from_rank + 1 && to_file == from_file
+                    to_rank == from_rank + 1
+                        && to_file == from_file
+                        && (!matches!(mv.kind, MoveKind::Promotion(_)) || to_rank == 7)
+                        && (mv.kind != MoveKind::Quiet || to_rank != 7)
+                        && (mv.kind != MoveKind::Promotion(Piece::King)
+                            && mv.kind != MoveKind::Promotion(Piece::Pawn))
                 }
                 MoveKind::DoublePawnPush => {
                     if !(from_rank == 1 && to_rank == 3 && to_file == from_file) {
@@ -759,14 +776,24 @@ impl Board {
                     self.piece_on(intermediate).is_none() && self.piece_on(mv.to).is_none()
                 }
                 MoveKind::Capture | MoveKind::PromotionCapture(_) => {
-                    to_rank == from_rank + 1 && to_file.abs_diff(from_file) == 1
+                    to_rank == from_rank + 1
+                        && to_file.abs_diff(from_file) == 1
+                        && (!matches!(mv.kind, MoveKind::PromotionCapture(_)) || to_rank == 7)
+                        && (mv.kind != MoveKind::Capture || to_rank != 7)
+                        && (mv.kind != MoveKind::PromotionCapture(Piece::King)
+                            && mv.kind != MoveKind::PromotionCapture(Piece::Pawn))
                 }
                 MoveKind::EnPassant => to_rank == from_rank + 1 && to_file.abs_diff(from_file) == 1,
                 _ => false,
             },
             Color::Black => match mv.kind {
                 MoveKind::Quiet | MoveKind::Promotion(_) => {
-                    to_rank == from_rank - 1 && to_file == from_file
+                    to_rank == from_rank - 1
+                        && to_file == from_file
+                        && (!matches!(mv.kind, MoveKind::Promotion(_)) || to_rank == 0)
+                        && (mv.kind != MoveKind::Quiet || to_rank != 0)
+                        && (mv.kind != MoveKind::Promotion(Piece::King)
+                            && mv.kind != MoveKind::Promotion(Piece::Pawn))
                 }
                 MoveKind::DoublePawnPush => {
                     if !(from_rank == 6 && to_rank == 4 && to_file == from_file) {
@@ -777,7 +804,12 @@ impl Board {
                     self.piece_on(intermediate).is_none() && self.piece_on(mv.to).is_none()
                 }
                 MoveKind::Capture | MoveKind::PromotionCapture(_) => {
-                    to_rank == from_rank - 1 && to_file.abs_diff(from_file) == 1
+                    to_rank == from_rank - 1
+                        && to_file.abs_diff(from_file) == 1
+                        && (!matches!(mv.kind, MoveKind::PromotionCapture(_)) || to_rank == 0)
+                        && (mv.kind != MoveKind::Capture || to_rank != 0)
+                        && (mv.kind != MoveKind::PromotionCapture(Piece::King)
+                            && mv.kind != MoveKind::PromotionCapture(Piece::Pawn))
                 }
                 MoveKind::EnPassant => to_rank == from_rank - 1 && to_file.abs_diff(from_file) == 1,
                 _ => false,
