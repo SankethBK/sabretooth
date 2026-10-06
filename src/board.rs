@@ -409,6 +409,7 @@ impl Board {
     }
 
     pub(crate) fn make_move(&mut self, mv: Move) {
+        self.debug_assert_no_piece_overlap(mv, "before make_move");
         let us = self.side_to_move;
         let them = us.opposite();
 
@@ -527,14 +528,37 @@ impl Board {
         }
 
         self.side_to_move = them;
+        self.debug_assert_no_piece_overlap(mv, "make_move");
     }
 
     pub(crate) fn unmake_move(&mut self) {
+        if let Some(entry) = self.history.last() {
+            debug_assert_eq!(
+                self.all_occupancy() & entry.mv.from.to_bb(),
+                0,
+                "move source is occupied before unmake {}; history tail={:?}",
+                entry.mv,
+                self.history.iter().rev().take(8).collect::<Vec<_>>(),
+            );
+        }
         let entry = self
             .history
             .pop()
             .expect("unmake_move requires prior history");
         let mv = entry.mv;
+
+        if let MoveKind::Promotion(promoted) = mv.kind {
+            debug_assert_eq!(
+                self.all_occupancy() & mv.from.to_bb(),
+                0,
+                "promotion source is occupied before unmake {mv}; expected promoted piece {promoted:?} on destination"
+            );
+            debug_assert_eq!(
+                self.piece_on(mv.to),
+                Some((self.side_to_move.opposite(), promoted)),
+                "promotion destination is inconsistent before unmake {mv}"
+            );
+        }
 
         self.side_to_move = self.side_to_move.opposite();
         let us = self.side_to_move;
@@ -633,7 +657,54 @@ impl Board {
                 }
             },
         }
+        self.debug_assert_no_piece_overlap(mv, "unmake_move");
     }
+
+    #[cfg(debug_assertions)]
+    fn debug_assert_no_piece_overlap(&self, mv: Move, operation: &str) {
+        let total_piece_bits: u32 = self
+            .pieces
+            .iter()
+            .flat_map(|by_piece| by_piece.iter())
+            .map(|bitboard| bitboard.count_ones())
+            .sum();
+        let occupied_squares = self.all_occupancy().count_ones();
+        if total_piece_bits == occupied_squares {
+            return;
+        }
+        let overlaps: Vec<String> = (0..64)
+            .filter_map(|index| {
+                let square = Square::from_index(index);
+                let pieces: Vec<String> = [Color::White, Color::Black]
+                    .into_iter()
+                    .flat_map(|color| {
+                        [
+                            Piece::Pawn,
+                            Piece::Knight,
+                            Piece::Bishop,
+                            Piece::Rook,
+                            Piece::Queen,
+                            Piece::King,
+                        ]
+                        .into_iter()
+                        .filter(move |piece| self.piece_bb(color, *piece) & square.to_bb() != 0)
+                        .map(move |piece| format!("{color:?} {piece:?}"))
+                    })
+                    .collect();
+                (pieces.len() > 1).then(|| format!("square {index}: {pieces:?}"))
+            })
+            .collect();
+        panic!(
+            "overlapping piece bitboards after {operation} {mv}; side_to_move={:?}; history={:?}; total piece bits={total_piece_bits}, occupied squares={occupied_squares}; overlaps={overlaps:?}\n{}",
+            self.side_to_move,
+            self.history.iter().rev().take(12).collect::<Vec<_>>(),
+            self.pretty_string(),
+        );
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[inline(always)]
+    fn debug_assert_no_piece_overlap(&self, _mv: Move, _operation: &str) {}
 
     fn put_piece(&mut self, square: Square, color: Color, piece: Piece) {
         self.pieces[color.index()][piece.index()] |= square.to_bb();
@@ -679,6 +750,29 @@ impl Board {
             return false;
         };
         if color != us {
+            return false;
+        }
+
+        // Move kinds carry semantics used by make_move, not just capture
+        // metadata. Reject stale PV hints whose source piece can follow the
+        // geometry but cannot legally perform that kind of move.
+        let kind_matches_piece = match piece {
+            Piece::Pawn => !matches!(
+                mv.kind,
+                MoveKind::CastleKingside | MoveKind::CastleQueenside
+            ),
+            Piece::Knight | Piece::Bishop | Piece::Rook | Piece::Queen => {
+                matches!(mv.kind, MoveKind::Quiet | MoveKind::Capture)
+            }
+            Piece::King => matches!(
+                mv.kind,
+                MoveKind::Quiet
+                    | MoveKind::Capture
+                    | MoveKind::CastleKingside
+                    | MoveKind::CastleQueenside
+            ),
+        };
+        if !kind_matches_piece {
             return false;
         }
 
@@ -908,6 +1002,18 @@ fn parse_en_passant(field: &str) -> Result<Option<Square>, FenError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_promotion_move_kind_for_queen_pv_hint() {
+        let board = Board::from_fen("7k/8/8/8/8/8/1q6/K7 b - - 0 1").unwrap();
+        let stale_promotion = Move::new(
+            Square::from_rf(1, 1),
+            Square::from_rf(0, 1),
+            MoveKind::Promotion(Piece::Queen),
+        );
+
+        assert!(!board.is_pseudo_legal(stale_promotion));
+    }
 
     #[test]
     fn parses_starting_position_fen() {
