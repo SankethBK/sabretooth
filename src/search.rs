@@ -9,6 +9,7 @@ use crate::uci::move_to_uci;
 pub const DEFAULT_SEARCH_DEPTH: u32 = 6;
 pub const MAX_TIMED_SEARCH_DEPTH: u32 = 64;
 const MAX_SEARCH_PLY: usize = 64;
+const MAX_QUIESCENCE_PLY: u32 = 32;
 const MATE_SCORE: i32 = 1_000_000;
 const DEADLINE_CHECK_INTERVAL: u64 = 2048;
 
@@ -17,6 +18,7 @@ pub struct SearchResult {
     pub best_move: Option<Move>,
     pub score: i32,
     pub nodes: u64,
+    pub qnodes: u64,
     pub pv: Vec<Move>,
 }
 
@@ -119,12 +121,14 @@ pub fn search_with_options(
 
     let mut pv_hint = result.pv.clone();
     let mut nodes = result.nodes;
+    let mut qnodes = result.qnodes;
     emit_search_info(1, &result, options);
 
     for current_depth in 2..=depth {
         let (current_result, current_completed) =
             search_with_pv_hint(board, current_depth, &pv_hint, deadline, state);
         nodes += current_result.nodes;
+        qnodes += current_result.qnodes;
 
         if !current_completed {
             break;
@@ -132,12 +136,14 @@ pub fn search_with_options(
 
         result = current_result;
         result.nodes = nodes;
+        result.qnodes = qnodes;
         pv_hint = result.pv.clone();
         completed = current_completed;
         emit_search_info(current_depth, &result, options);
     }
 
     result.nodes = nodes;
+    result.qnodes = qnodes;
     let _ = completed;
     result
 }
@@ -150,6 +156,7 @@ pub fn search_with_pv_hint(
     state: &mut SearchState,
 ) -> (SearchResult, bool) {
     let mut nodes = 1;
+    let mut qnodes = 0;
     let mut pv = PrincipalVariation::new();
     let mut move_picker = MovePicker::new(pv_hint.first().copied());
     let mut timed_out = false;
@@ -188,6 +195,7 @@ pub fn search_with_pv_hint(
             -alpha,
             1,
             &mut nodes,
+            &mut qnodes,
             &mut pv,
             pv_hint,
             deadline,
@@ -221,6 +229,7 @@ pub fn search_with_pv_hint(
                 best_move: None,
                 score,
                 nodes,
+                qnodes,
                 pv: Vec::new(),
             },
             true,
@@ -231,6 +240,7 @@ pub fn search_with_pv_hint(
         best_move,
         score: best_score,
         nodes,
+        qnodes,
         pv: pv.line_at(0).to_vec(),
     };
 
@@ -246,6 +256,7 @@ pub fn search_root_moves(board: &mut Board, depth: u32) -> Vec<RootMoveScore> {
     for mv in legal_moves {
         board.make_move(mv);
         let mut nodes = 1;
+        let mut qnodes = 0;
         let mut pv = PrincipalVariation::new();
         let mut state = SearchState::new();
 
@@ -261,6 +272,7 @@ pub fn search_root_moves(board: &mut Board, depth: u32) -> Vec<RootMoveScore> {
             i32::MAX,
             1,
             &mut nodes,
+            &mut qnodes,
             &mut pv,
             &[],
             None,
@@ -287,6 +299,7 @@ pub fn search_root_move_lines(board: &mut Board, depth: u32) -> Vec<RootMoveLine
     for mv in legal_moves {
         board.make_move(mv);
         let mut nodes = 1;
+        let mut qnodes = 0;
         let mut pv = PrincipalVariation::new();
         let mut state = SearchState::new();
         let child_score = negamax(
@@ -296,6 +309,7 @@ pub fn search_root_move_lines(board: &mut Board, depth: u32) -> Vec<RootMoveLine
             i32::MAX,
             1,
             &mut nodes,
+            &mut qnodes,
             &mut pv,
             &[],
             None,
@@ -335,12 +349,20 @@ fn negamax(
     beta: i32,
     ply: u32,
     nodes: &mut u64,
+    qnodes: &mut u64,
     pv: &mut PrincipalVariation,
     pv_hint: &[Move],
     deadline: Option<Instant>,
     timed_out: &mut bool,
     state: &mut SearchState,
 ) -> i32 {
+    if depth == 0 {
+        pv.clear_at(ply as usize);
+        return quiescence_search(
+            board, alpha, beta, ply, 0, nodes, qnodes, deadline, timed_out,
+        );
+    }
+
     *nodes += 1;
     if should_stop(*nodes, deadline) {
         *timed_out = true;
@@ -350,10 +372,6 @@ fn negamax(
     let us = board.side_to_move();
 
     let in_check = board.is_in_check(us);
-    if depth == 0 && !in_check {
-        pv.clear_at(ply as usize);
-        return side_to_move_eval(board);
-    }
     let mut move_picker = MovePicker::new(pv_hint.get(ply as usize).copied());
     if move_picker.is_empty(board, state, ply as usize) {
         pv.clear_at(ply as usize);
@@ -387,6 +405,7 @@ fn negamax(
             -alpha,
             ply + 1,
             nodes,
+            qnodes,
             pv,
             pv_hint,
             deadline,
@@ -424,6 +443,118 @@ fn negamax(
     }
 
     best_score
+}
+
+fn quiescence_search(
+    board: &mut Board,
+    mut alpha: i32,
+    beta: i32,
+    ply: u32,
+    qply: u32,
+    nodes: &mut u64,
+    qnodes: &mut u64,
+    deadline: Option<Instant>,
+    timed_out: &mut bool,
+) -> i32 {
+    *nodes += 1;
+    *qnodes += 1;
+    if should_stop(*nodes, deadline) {
+        *timed_out = true;
+        return 0;
+    }
+
+    let us = board.side_to_move();
+    let in_check = board.is_in_check(us);
+    let mut best_score = if in_check {
+        i32::MIN + 1
+    } else {
+        let stand_pat = side_to_move_eval(board);
+        if stand_pat >= beta || qply >= MAX_QUIESCENCE_PLY {
+            return stand_pat;
+        }
+        alpha = alpha.max(stand_pat);
+        stand_pat
+    };
+
+    let mut moves = Vec::with_capacity(32);
+    if in_check {
+        moves = board.generate_pseudo_legal_moves();
+    } else {
+        board.generate_pseudo_legal_captures_into(&mut moves);
+        board.generate_pseudo_legal_quiet_promotions_into(&mut moves);
+        moves.sort_unstable_by(|a, b| {
+            capture_order_score(board, *b).cmp(&capture_order_score(board, *a))
+        });
+    }
+
+    let mut legal_moves = 0;
+    for mv in moves {
+        debug_assert!(
+            board.is_pseudo_legal(mv),
+            "quiescence generated pseudo-illegal move {mv} ({:?}) for {:?}",
+            mv.kind,
+            us,
+        );
+        board.make_move(mv);
+        if board.is_in_check(us) {
+            board.unmake_move();
+            continue;
+        }
+        legal_moves += 1;
+
+        let score = if qply >= MAX_QUIESCENCE_PLY {
+            -side_to_move_eval(board)
+        } else {
+            -quiescence_search(
+                board,
+                -beta,
+                -alpha,
+                ply + 1,
+                qply + 1,
+                nodes,
+                qnodes,
+                deadline,
+                timed_out,
+            )
+        };
+        board.unmake_move();
+
+        if *timed_out {
+            return 0;
+        }
+        best_score = best_score.max(score);
+        alpha = alpha.max(score);
+        if alpha >= beta {
+            break;
+        }
+    }
+
+    if in_check && legal_moves == 0 {
+        return terminal_score(true, ply);
+    }
+
+    // Captures and promotions can all be illegal (for example, pinned
+    // attackers); the stand-pat score remains the result in that case.
+    best_score
+}
+
+fn capture_order_score(board: &Board, mv: Move) -> i32 {
+    let attacker = board
+        .piece_on(mv.from)
+        .map_or(0, |(_, piece)| piece.score());
+    let victim = if matches!(mv.kind, crate::types::MoveKind::EnPassant) {
+        crate::types::Piece::Pawn.score()
+    } else {
+        board.piece_on(mv.to).map_or(0, |(_, piece)| piece.score())
+    };
+    let promotion = match mv.kind {
+        crate::types::MoveKind::Promotion(piece)
+        | crate::types::MoveKind::PromotionCapture(piece) => {
+            piece.score() - crate::types::Piece::Pawn.score()
+        }
+        _ => 0,
+    };
+    victim * 16 - attacker + promotion
 }
 
 fn should_stop(nodes: u64, deadline: Option<Instant>) -> bool {
@@ -536,7 +667,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "horizon effect test that current quiescence search doesn't solve"]
     fn tactical_position_avoids_knight_blunder() {
         let mut board =
             Board::from_fen("2k4r/pp2pQ2/2qp2p1/2p5/4P2r/P2P3N/1PP2P2/R3R1K1 w - - 0 24").unwrap();
@@ -549,6 +679,7 @@ mod tests {
     fn checkmate_score_prefers_faster_mates() {
         let mut board = Board::from_fen("6k1/6Q1/6K1/8/8/8/8/8 b - - 0 1").unwrap();
         let mut nodes = 1;
+        let mut qnodes = 0;
 
         let immediate_mate = negamax(
             &mut board,
@@ -557,6 +688,7 @@ mod tests {
             i32::MAX,
             1,
             &mut nodes,
+            &mut qnodes,
             &mut PrincipalVariation::new(),
             &[],
             None,
@@ -570,6 +702,7 @@ mod tests {
             i32::MAX,
             3,
             &mut nodes,
+            &mut qnodes,
             &mut PrincipalVariation::new(),
             &[],
             None,
@@ -622,6 +755,8 @@ mod tests {
         let result = search(&mut board, 2);
 
         assert!(result.nodes > 1);
+        assert!(result.qnodes > 0);
+        assert!(result.nodes >= result.qnodes);
     }
 
     #[test]

@@ -80,6 +80,29 @@ impl Board {
         moves.extend(self.generate_castling_moves());
     }
 
+    pub fn generate_pseudo_legal_quiet_promotions_into(&self, moves: &mut Vec<Move>) {
+        let us = self.side_to_move;
+        let (from_rank, to_rank) = match us {
+            Color::White => (6, 7),
+            Color::Black => (1, 0),
+        };
+        let mut pawns = self.piece_bb(us, Piece::Pawn);
+
+        while pawns != 0 {
+            let from = pop_lsb(&mut pawns);
+            if from.rank() != from_rank {
+                continue;
+            }
+
+            let to = Square::from_rf(to_rank, from.file());
+            if self.piece_on(to).is_none() {
+                for promoted in [Piece::Queen, Piece::Rook, Piece::Bishop, Piece::Knight] {
+                    moves.push(Move::new(from, to, MoveKind::Promotion(promoted)));
+                }
+            }
+        }
+    }
+
     pub fn generate_knight_moves(&self, gen_type: GenType) -> Vec<Move> {
         let mut moves = Vec::with_capacity(16);
         self.generate_knight_moves_into(&mut moves, gen_type);
@@ -598,6 +621,19 @@ mod tests {
                 MoveKind::PromotionCapture(piece)
             )));
         }
+    }
+
+    #[test]
+    fn quiet_promotion_generator_emits_only_forward_promotions() {
+        let board = Board::from_fen("7k/P7/8/8/8/8/8/7K w - - 0 1").unwrap();
+        let mut moves = Vec::new();
+        board.generate_pseudo_legal_quiet_promotions_into(&mut moves);
+
+        assert_eq!(moves.len(), 4);
+        assert!(moves
+            .iter()
+            .all(|mv| mv.from == Square::from_rf(6, 0) && mv.to == Square::from_rf(7, 0)));
+        assert!(moves.iter().all(|mv| mv.is_promotion()));
     }
 
     #[test]

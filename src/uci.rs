@@ -237,6 +237,7 @@ impl Engine {
         writeln!(out, "depth {}", depth)?;
         writeln!(out, "search_score {}", result.score)?;
         writeln!(out, "nodes {}", result.nodes)?;
+        writeln!(out, "qnodes {}", result.qnodes)?;
 
         if let Some(bestmove) = result.best_move {
             writeln!(out, "bestmove {}", move_to_uci(bestmove))?;
@@ -284,6 +285,7 @@ impl Engine {
                     best_move: Some(best.mv),
                     score: best.score,
                     nodes: 0,
+                    qnodes: 0,
                     pv: best.line.clone(),
                 },
             ));
@@ -298,6 +300,7 @@ impl Engine {
                         0
                     },
                     nodes: 0,
+                    qnodes: 0,
                     pv: Vec::new(),
                 },
             ));
@@ -311,7 +314,13 @@ impl Engine {
                 .map(|mv| move_to_uci(*mv))
                 .collect::<Vec<_>>()
                 .join(" ");
-            writeln!(out, "{} score {} pv {}", move_to_uci(scored.mv), scored.score, line)?;
+            writeln!(
+                out,
+                "{} score {} pv {}",
+                move_to_uci(scored.mv),
+                scored.score,
+                line
+            )?;
         }
 
         Ok(())
@@ -503,6 +512,7 @@ mod tests {
                     )),
                     score: 123,
                     nodes: 456,
+                    qnodes: 78,
                     pv: vec![Move::new(
                         Square::from_rf(1, 4),
                         Square::from_rf(3, 4),
@@ -522,6 +532,7 @@ mod tests {
         assert!(text.contains("depth 4"));
         assert!(text.contains("search_score 123"));
         assert!(text.contains("nodes 456"));
+        assert!(text.contains("qnodes 78"));
         assert!(text.contains("bestmove e2e4"));
     }
 
