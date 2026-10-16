@@ -469,8 +469,19 @@ fn quiescence_search(
         i32::MIN + 1
     } else {
         let stand_pat = side_to_move_eval(board);
-        if stand_pat >= beta || qply >= MAX_QUIESCENCE_PLY {
-            return stand_pat;
+        if qply >= MAX_QUIESCENCE_PLY {
+            return if has_any_legal_move(board) {
+                stand_pat
+            } else {
+                0
+            };
+        }
+        if stand_pat >= beta {
+            return if has_any_legal_move(board) {
+                stand_pat
+            } else {
+                0
+            };
         }
         alpha = alpha.max(stand_pat);
         stand_pat
@@ -495,12 +506,36 @@ fn quiescence_search(
             mv.kind,
             us,
         );
+        let capture_gain = if mv.is_capture() {
+            captured_piece_value(board, mv)
+        } else {
+            0
+        };
         board.make_move(mv);
         if board.is_in_check(us) {
             board.unmake_move();
             continue;
         }
         legal_moves += 1;
+
+        // Don't spend qsearch nodes on losing captures. Keep promotions and
+        // every move made while in check; both need full tactical treatment.
+        if !in_check
+            && mv.is_capture()
+            && !mv.is_promotion()
+            && !board.is_in_check(board.side_to_move())
+        {
+            let exchange_gain = capture_gain
+                - best_exchange_gain(
+                    board,
+                    mv.to,
+                    board.piece_on(mv.to).map_or(0, |(_, piece)| piece.score()),
+                );
+            if exchange_gain < 0 {
+                board.unmake_move();
+                continue;
+            }
+        }
 
         let score = if qply >= MAX_QUIESCENCE_PLY {
             -side_to_move_eval(board)
@@ -533,9 +568,93 @@ fn quiescence_search(
         return terminal_score(true, ply);
     }
 
+    if !in_check && legal_moves == 0 && !has_legal_quiet_move(board) {
+        return 0;
+    }
+
     // Captures and promotions can all be illegal (for example, pinned
-    // attackers); the stand-pat score remains the result in that case.
+    // attackers); in that case, retain stand-pat if a quiet move exists.
     best_score
+}
+
+fn captured_piece_value(board: &Board, mv: Move) -> i32 {
+    if matches!(mv.kind, crate::types::MoveKind::EnPassant) {
+        crate::types::Piece::Pawn.score()
+    } else {
+        board.piece_on(mv.to).map_or(0, |(_, piece)| piece.score())
+    }
+}
+
+fn has_any_legal_move(board: &mut Board) -> bool {
+    let us = board.side_to_move();
+    for mv in board.generate_pseudo_legal_moves() {
+        board.make_move(mv);
+        let legal = !board.is_in_check(us);
+        board.unmake_move();
+        if legal {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_legal_quiet_move(board: &mut Board) -> bool {
+    let us = board.side_to_move();
+    for mv in board.generate_pseudo_legal_quiets() {
+        board.make_move(mv);
+        let legal = !board.is_in_check(us);
+        board.unmake_move();
+        if legal {
+            return true;
+        }
+    }
+    false
+}
+
+// Called after the candidate capture has been made. Follow a least-valuable
+// legal-attacker exchange sequence on the destination square. This is a
+// conservative SEE: promotions and captures made in check are not pruned.
+fn best_exchange_gain(board: &mut Board, target: crate::types::Square, victim_value: i32) -> i32 {
+    let us = board.side_to_move();
+    let mut least_attacker: Option<(i32, Move)> = None;
+
+    for mv in board.generate_pseudo_legal_captures() {
+        if mv.to != target {
+            continue;
+        }
+        let Some((_, attacker)) = board.piece_on(mv.from) else {
+            continue;
+        };
+
+        board.make_move(mv);
+        let legal = !board.is_in_check(us);
+        board.unmake_move();
+        if !legal {
+            continue;
+        }
+
+        let value = attacker.score();
+        if least_attacker.is_none_or(|(least, _)| value < least) {
+            least_attacker = Some((value, mv));
+        }
+    }
+
+    let Some((_, mv)) = least_attacker else {
+        return 0;
+    };
+
+    board.make_move(mv);
+    let promoted_value = match mv.kind {
+        crate::types::MoveKind::PromotionCapture(piece) => {
+            piece.score() - crate::types::Piece::Pawn.score()
+        }
+        _ => 0,
+    };
+    let occupant_value = board.piece_on(target).map_or(0, |(_, piece)| piece.score());
+    let reply_gain = best_exchange_gain(board, target, occupant_value);
+    board.unmake_move();
+
+    (victim_value + promoted_value - reply_gain).max(0)
 }
 
 fn capture_order_score(board: &Board, mv: Move) -> i32 {
